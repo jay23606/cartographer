@@ -29,6 +29,12 @@ func relKB(t *testing.T, repoName string, deps ...[2]string) *KB {
 		}
 		commitSettingsHere(t, k, b.String())
 	}
+	if repoName != "" {
+		// What the first sync leaves behind: the remote's default branch is known
+		// and carries the committed settings.
+		gitHere(t, k.Root, "update-ref", "refs/remotes/origin/main", "HEAD")
+		gitHere(t, k.Root, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	}
 	return k
 }
 
@@ -259,6 +265,26 @@ func TestResolveReadErrorIsAnError(t *testing.T) {
 	v, err := ResolveRelations(RelationEnv{Mounts: m}, f.byName["a"])
 	if err == nil {
 		t.Fatalf("expected an error, got %+v", v)
+	}
+	if !reflect.DeepEqual(v, RelationView{}) {
+		t.Fatalf("a partial view came back with the error: %+v", v)
+	}
+}
+
+// A git failure reading a target's origin is an error, never no_remote.
+func TestResolveOriginReadErrorIsAnError(t *testing.T) {
+	t.Parallel()
+	f := newFleet()
+	f.add("a", relKB(t, "a", [2]string{"b", "b"}))
+	f.add("b", relKB(t, "b"))
+	m := f.mount(nil)
+	b := f.byName["b"]
+	if err := os.Rename(filepath.Join(b.Root, ".git"), filepath.Join(b.Root, ".git-away")); err != nil {
+		t.Fatal(err)
+	}
+	v, err := ResolveRelations(RelationEnv{Mounts: m}, f.byName["a"])
+	if err == nil {
+		t.Fatalf("a failing git read as a reason: %+v", v)
 	}
 	if !reflect.DeepEqual(v, RelationView{}) {
 		t.Fatalf("a partial view came back with the error: %+v", v)
