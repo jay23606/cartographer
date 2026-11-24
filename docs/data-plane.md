@@ -61,6 +61,7 @@ kb-<domain>/                          # git repo = OKF bundle (content directori
 ├── templates/                         # KB-ONLY CONCEPT TEMPLATES (not provisioning artifacts)
 │   └── <slug>.md                      # frontmatter + Markdown skeleton; rendered by concept_new
 │
+├── dashboards/<name>.yaml             # KB-ONLY DASHBOARD: widgets that hold queries over the KB (dashboard_patch)
 ├── instructions.md                    # curated directives (D61), scaffolded by kb create (D325); frontmatter keys below
 ├── paths.yaml                         # optional: declared {{path:…}}/{{repo:…}} keys (D263)
 ├── settings.yaml                      # optional: the KB's own policy, set nowhere else (D746, D906)
@@ -68,6 +69,8 @@ kb-<domain>/                          # git repo = OKF bundle (content directori
 ```
 
 `services/` is included in `WalkConcepts` (search, graph, lint all see it) but its root is `kb.Root`, not `kb.DataRoot()`. Service concept IDs carry the `services/` prefix. `ResolvePath` is the one place that picks the root for an ID, and every operation that turns an ID into a file — read, write, collision check, removal, `concept_move` — goes through it (`LocateConcept` for callers that move files themselves). For the same reason `services` is not a valid map or journal name: `map_create` refuses it, since the scaffold would land under `data/services/`, where no read looks (D269). A `data/services/` is neither read nor cleaned up. `agents/` and `hooks/` are not concepts (no OKF frontmatter, they don't go through `WalkConcepts`): they are provisioning artifacts materialized client-side — see `docs/sync.md` §Agents and hooks.
+
+`dashboards/` is outside `WalkConcepts` too: a dashboard has no ConceptID, no OKF frontmatter, is never indexed, linted or graphed, and `artifact_*` refuses the path. It is a YAML file `dashboards/<name>.yaml` (name a lowercase slug of at most 48 characters; at most 32 per KB, 40 widgets each, 64 KiB), versioned and committed like the rest, read with `dashboard_list` / `dashboard_get` and changed only through `dashboard_patch` / `dashboard_delete`, which validate it strictly (a hand-edited file is read tolerantly: a bad widget stays in the file and draws as an error). A symlink or a non-regular file is refused on read and write.
 
 `templates/` is outside `WalkConcepts`: templates have no ConceptID and are never indexed, linted or added to the graph. A template is a KB-only artifact, not a provisioning kind: it is maintained through `artifact_*`, discovered with `template_list`, and used once by `concept_new`; it never affects a provisioning manifest or its revision. A server plugin can supply templates with a map contract as a preset (`preset_list`), which the writer applies through the same tools. A template is also a closed page schema that a map's pages bind to (§Templates are page schemas).
 

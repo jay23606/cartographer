@@ -273,5 +273,40 @@ func TestDashboardColumnsAreValues(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "field names") || !strings.Contains(err.Error(), "column") {
 			t.Errorf("%s: %v", name, err)
 		}
+// TestWriteDashboardRefusesSymlinkAndRemovesFolder: the write checks the read
+// does, and the folder goes with its last file.
+func TestWriteDashboardRefusesSymlinkAndRemovesFolder(t *testing.T) {
+	t.Parallel()
+	k := &KB{Root: t.TempDir()}
+	if err := k.WriteDashboard("a", []byte(testDashboard)); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := k.ReadDashboard("a"); err != nil || string(got) != testDashboard {
+		t.Fatalf("round trip: %q %v", got, err)
+	}
+	if err := k.WriteDashboard("Bad Name", nil); err == nil {
+		t.Error("an invalid name was written")
+	}
+	if err := k.WriteDashboard("big", make([]byte, MaxDashboardBytes+1)); err == nil {
+		t.Error("an oversized file was written")
+	}
+	target := filepath.Join(t.TempDir(), "d.yaml")
+	if err := os.WriteFile(target, []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(target, filepath.Join(k.Root, DashboardsDir, "link.yaml")); err != nil {
+		t.Skipf("symlink: %v", err)
+	}
+	if err := k.WriteDashboard("link", []byte(testDashboard)); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("write through a symlink: %v", err)
+	}
+	if err := k.RemoveDashboard("link"); err == nil || !strings.Contains(err.Error(), "symlink") {
+		t.Errorf("remove a symlink: %v", err)
+	}
+	if b, _ := os.ReadFile(target); string(b) != "x" {
+		t.Error("the symlink target changed")
+	}
+	if err := k.RemoveDashboard("nothing"); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("remove missing: %v", err)
 	}
 }

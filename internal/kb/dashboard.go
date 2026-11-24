@@ -502,3 +502,58 @@ func (kb *KB) ListDashboards() ([]string, error) {
 	sort.Strings(names)
 	return names, nil
 }
+
+// dashboardTarget resolves dashboards/<name>.yaml for a write or a removal and
+// refuses a symlinked folder, a symlinked file and a non-regular file.
+func (kb *KB) dashboardTarget(name string) (dir, path string, err error) {
+	if !ValidDashboardName(name) {
+		return "", "", fmt.Errorf("dashboard name %q: want a lowercase slug of at most 48 characters", name)
+	}
+	dir, _, err = kb.dashboardsDir()
+	if err != nil {
+		return "", "", err
+	}
+	path = filepath.Join(dir, name+".yaml")
+	if fi, lerr := os.Lstat(path); lerr == nil {
+		switch {
+		case fi.Mode()&os.ModeSymlink != 0:
+			return "", "", fmt.Errorf("%s: symlink not allowed", DashboardPath(name))
+		case !fi.Mode().IsRegular():
+			return "", "", fmt.Errorf("%s: not a regular file", DashboardPath(name))
+		}
+	} else if !errors.Is(lerr, os.ErrNotExist) {
+		return "", "", lerr
+	}
+	return dir, path, nil
+}
+
+// WriteDashboard stores data as dashboards/<name>.yaml, creating the folder.
+// The bytes are not judged here: the caller validated them. The caller holds
+// the KB's git lock and commits.
+func (kb *KB) WriteDashboard(name string, data []byte) error {
+	if len(data) > MaxDashboardBytes {
+		return fmt.Errorf("%s: %d bytes, the cap is %d", DashboardPath(name), len(data), MaxDashboardBytes)
+	}
+	dir, path, err := kb.dashboardTarget(name)
+	if err != nil {
+		return err
+	}
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return err
+	}
+	return os.WriteFile(path, data, 0o644)
+}
+
+// RemoveDashboard deletes dashboards/<name>.yaml and the folder when it is
+// left empty. A missing file is an error wrapping os.ErrNotExist.
+func (kb *KB) RemoveDashboard(name string) error {
+	dir, path, err := kb.dashboardTarget(name)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil {
+		return err
+	}
+	_ = os.Remove(dir) // fails while other dashboards remain: that is the point
+	return nil
+}
