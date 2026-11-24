@@ -1012,7 +1012,7 @@ passing `cfg.SearchRoots`/`cfg.Paths`.
 ### KB relations
 
 A KB declares the KBs it depends on in `depends_on` of its `settings.yaml`
-(`docs/data-plane.md`). `sync_pull` serves, per KB, the resolved view as
+(`docs/kb-relations.md`). `sync_pull` serves, per KB, the resolved view as
 `relations` (`declared`, `resolved`, `closure`, `unresolved`; see
 `docs/control-plane.md`): always present, with empty arrays when the KB declares none, so an
 absent field means a server that predates it. It is outside `revision` and every signature. The client
