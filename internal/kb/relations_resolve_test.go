@@ -116,6 +116,41 @@ func TestResolveClosureAndCycle(t *testing.T) {
 	}
 }
 
+// A cycle of three through the KB, and a cycle closed through an alias.
+func TestResolveLongerAndAliasedCycles(t *testing.T) {
+	t.Parallel()
+	f := newFleet()
+	f.add("a", relKB(t, "a", [2]string{"b", "b"}))
+	f.add("b", relKB(t, "b", [2]string{"c", "c"}))
+	f.add("c", relKB(t, "c", [2]string{"a", "a"}))
+	m := f.mount(nil)
+	for _, n := range []string{"a", "b", "c"} {
+		v := resolve(t, m, f.byName[n], nil)
+		if len(v.Resolved) != 0 || len(v.Closure) != 0 || len(v.Unresolved) != 1 || v.Unresolved[0].Reason != RelationCycle {
+			t.Fatalf("3-cycle seen from %s: %+v", n, v)
+		}
+	}
+
+	// a declares "old" (renamed to "new"); new declares a back by its current name.
+	g := newFleet()
+	g.add("a", relKB(t, "a", [2]string{"old", "core"}))
+	g.add("new", relKB(t, "core", [2]string{"a", "a"}))
+	v := resolve(t, g.mount(map[string]string{"old": "new"}), g.byName["a"], nil)
+	if len(v.Resolved) != 0 || len(v.Closure) != 0 || len(v.Unresolved) != 1 ||
+		v.Unresolved[0].Name != "old" || v.Unresolved[0].Reason != RelationCycle {
+		t.Fatalf("alias cycle: %+v", v)
+	}
+	// The same cycle entered through an alias in the middle of the chain.
+	h := newFleet()
+	h.add("a", relKB(t, "a", [2]string{"b", "b"}))
+	h.add("b", relKB(t, "b", [2]string{"old", "core"}))
+	h.add("new", relKB(t, "core", [2]string{"a", "a"}))
+	hv := resolve(t, h.mount(map[string]string{"old": "new"}), h.byName["a"], nil)
+	if len(hv.Resolved) != 0 || len(hv.Unresolved) != 1 || hv.Unresolved[0].Reason != RelationCycle {
+		t.Fatalf("alias in the middle of a cycle: %+v", hv)
+	}
+}
+
 // AC-kbrel-7
 func TestUnreadableTargetEqualsAbsent(t *testing.T) {
 	t.Parallel()
