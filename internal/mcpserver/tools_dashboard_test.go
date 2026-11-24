@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -377,5 +378,44 @@ func TestDashboardWritersNeedWholeKBWrite(t *testing.T) {
 	writer := restrictedContext(auth.Policy{Permissions: []auth.Permission{{KB: "docs", Write: true}}})
 	if res := s.callTool(writer, "dashboard_patch", json.RawMessage(patchArgs("plan", hash, `[{"op":"set_title","title":"X"}]`))); res.IsError {
 		t.Fatalf("a whole-KB writer is refused: %s", res.Content[0].Text)
+	}
+}
+
+// TestDashboardSecretScanCoversEveryAuthorString: a credential in a widget
+// title, the dashboard title or a filter field value is refused, unquoted.
+func TestDashboardSecretScanCoversEveryAuthorString(t *testing.T) {
+	t.Parallel()
+	s, k := workServer(t)
+	secret := "ghp_" + strings.Repeat("a1B2", 9)
+	for name, ops := range map[string]string{
+		"widget title":    `[{"op":"add","widget":{"id":"w","type":"list","title":"` + secret + `"}}]`,
+		"dashboard title": `[{"op":"set_title","title":"` + secret + `"}]`,
+		"filter field":    `[{"op":"add","widget":{"id":"w","type":"list","filter":{"fields":{"owner":"` + secret + `"}}}}]`,
+	} {
+		res := callTool(t, s, "dashboard_patch", patchArgs("scan", "", ops))
+		if !res.IsError || strings.Contains(res.Content[0].Text, secret) || !strings.Contains(res.Content[0].Text, "credential") {
+			t.Fatalf("%s: %+v", name, res)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(k.Root, "dashboards", "scan.yaml")); err == nil {
+		t.Fatal("written")
+	}
+}
+
+// TestDashboardCapCountsEveryFile: unparsable and badly named files count
+// toward the cap of 32, though dashboard_list does not name them.
+func TestDashboardCapCountsEveryFile(t *testing.T) {
+	t.Parallel()
+	s, k := workServer(t)
+	for i := 0; i < kb.MaxDashboards-1; i++ {
+		writeDashboardFile(t, k, fmt.Sprintf("d%02d", i), ": not [yaml")
+	}
+	writeDashboardFile(t, k, "Bad_Name", "x")
+	res := callTool(t, s, "dashboard_patch", patchArgs("one-more", "", patchAddOps))
+	if !res.IsError || !strings.Contains(res.Content[0].Text, "cap is 32") {
+		t.Fatalf("%+v", res)
+	}
+	if _, err := os.Stat(filepath.Join(k.Root, "dashboards", "one-more.yaml")); err == nil {
+		t.Fatal("written past the cap")
 	}
 }

@@ -310,3 +310,22 @@ func TestWriteDashboardRefusesSymlinkAndRemovesFolder(t *testing.T) {
 		t.Errorf("remove missing: %v", err)
 	}
 }
+
+// TestWriteDashboardIsAtomic: a write replaces the file whole and leaves no
+// temporary file next to it.
+func TestWriteDashboardIsAtomic(t *testing.T) {
+	t.Parallel()
+	k := &KB{Root: t.TempDir()}
+	for _, body := range []string{testDashboard, "widgets: []\n"} {
+		if err := k.WriteDashboard("a", []byte(body)); err != nil {
+			t.Fatal(err)
+		}
+		if got, _ := k.ReadDashboard("a"); string(got) != body {
+			t.Fatalf("got %q", got)
+		}
+	}
+	entries, _ := os.ReadDir(filepath.Join(k.Root, DashboardsDir))
+	if len(entries) != 1 {
+		t.Fatalf("leftovers: %v", entries)
+	}
+}

@@ -541,7 +541,7 @@ func (kb *KB) WriteDashboard(name string, data []byte) error {
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o644)
+	return writeFileAtomic(path, data)
 }
 
 // RemoveDashboard deletes dashboards/<name>.yaml and the folder when it is
@@ -556,4 +556,25 @@ func (kb *KB) RemoveDashboard(name string) error {
 	}
 	_ = os.Remove(dir) // fails while other dashboards remain: that is the point
 	return nil
+}
+
+// CountDashboardFiles counts every regular *.yaml of dashboards/, whatever its
+// name or content: the number the per-KB cap is judged on, so a file that
+// ListDashboards does not name (an invalid name, an unparsable body) still counts.
+func (kb *KB) CountDashboardFiles() (int, error) {
+	dir, exists, err := kb.dashboardsDir()
+	if err != nil || !exists {
+		return 0, err
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, err
+	}
+	n := 0
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".yaml") && e.Type().IsRegular() {
+			n++
+		}
+	}
+	return n, nil
 }
