@@ -159,3 +159,54 @@ func TestApplyDashboardOpsEachOp(t *testing.T) {
 		}
 	}
 }
+
+func TestUpdateRepairsWidgetWithProblem(t *testing.T) {
+	t.Parallel()
+	bad := []byte("widgets:\n  - id: a\n    type: stat\n    width: 9\n")
+	out, err := ApplyDashboardOps(bad, mustOps(t, `[{"op":"update","id":"a","widget":{"width":2}}]`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d, _ := ParseDashboard(out); d.Widgets[0].Width != 2 || d.Widgets[0].Problem != "" {
+		t.Errorf("not repaired: %+v", d.Widgets[0])
+	}
+	if _, err := ApplyDashboardOps(bad, mustOps(t, `[{"op":"remove","id":"a"}]`)); err != nil {
+		t.Errorf("remove of a bad widget: %v", err)
+	}
+}
+
+func TestPatchRefusesToRewriteUntargetedBadWidget(t *testing.T) {
+	t.Parallel()
+	in := []byte("widgets:\n  - id: a\n    type: stat\n    bogus: 1\n  - id: b\n    type: stat\n")
+	for _, ops := range []string{
+		`[{"op":"set_title","title":"T"}]`,
+		`[{"op":"update","id":"b","widget":{"title":"B"}}]`,
+	} {
+		_, err := ApplyDashboardOps(in, mustOps(t, ops))
+		if err == nil || !strings.Contains(err.Error(), `widgets[0] (id "a")`) || !strings.Contains(err.Error(), "bogus") {
+			t.Errorf("%s: want a refusal naming widget a and its problem, got %v", ops, err)
+		}
+	}
+}
+
+func TestDecodeDashboardOpsRefusesDuplicateKeys(t *testing.T) {
+	t.Parallel()
+	if _, err := DecodeDashboardOps([]byte(`[{"op":"remove","id":"a","id":"b"}]`)); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("duplicate op key: %v", err)
+	}
+	ops := mustOps(t, `[{"op":"add","widget":{"id":"a","id":"b","type":"stat"}}]`)
+	if _, err := ApplyDashboardOps(nil, ops); err == nil || !strings.Contains(err.Error(), "duplicate") {
+		t.Errorf("duplicate widget key: %v", err)
+	}
+}
+
+func TestUpdateIDComparedAsString(t *testing.T) {
+	t.Parallel()
+	base := []byte("widgets:\n  - id: a\n    type: stat\n")
+	if _, err := ApplyDashboardOps(base, mustOps(t, `[{"op":"update","id":"a","widget":{"id":"a","title":"x"}}]`)); err != nil {
+		t.Errorf("same id spelled with an escape refused: %v", err)
+	}
+	if _, err := ApplyDashboardOps(base, mustOps(t, `[{"op":"update","id":"a","widget":{"id":"b"}}]`)); err == nil {
+		t.Error("id change accepted")
+	}
+}

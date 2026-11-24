@@ -56,9 +56,9 @@ func DecodeDashboardOps(data []byte) ([]DashboardOp, error) {
 	}
 	ops := make([]DashboardOp, 0, len(raw))
 	for i, r := range raw {
-		var keys map[string]json.RawMessage
-		if err := json.Unmarshal(r, &keys); err != nil {
-			return nil, fmt.Errorf("op %d: not an object", i+1)
+		keys, err := objectKeys(r)
+		if err != nil {
+			return nil, fmt.Errorf("op %d: %v", i+1, err)
 		}
 		var op DashboardOp
 		dec := json.NewDecoder(bytes.NewReader(r))
@@ -72,6 +72,36 @@ func DecodeDashboardOps(data []byte) ([]DashboardOp, error) {
 		ops = append(ops, op)
 	}
 	return ops, nil
+}
+
+// objectKeys reads a JSON object into its raw values, refusing a repeated key
+// (encoding/json would keep the last silently) and anything that is not an
+// object.
+func objectKeys(raw []byte) (map[string]json.RawMessage, error) {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, errors.New("not an object")
+	}
+	keys := map[string]json.RawMessage{}
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return nil, err
+		}
+		k, _ := t.(string)
+		if _, dup := keys[k]; dup {
+			return nil, fmt.Errorf("duplicate key %q", k)
+		}
+		var v json.RawMessage
+		if err := dec.Decode(&v); err != nil {
+			return nil, err
+		}
+		keys[k] = v
+	}
+	if _, err := dec.Token(); err != nil {
+		return nil, err
+	}
+	return keys, nil
 }
 
 func checkOpKeys(op string, keys map[string]json.RawMessage) error {
@@ -115,9 +145,9 @@ func NewAddOp(w DashboardWidget) (DashboardOp, error) {
 // read-only "error" key too.
 func decodeWidget(raw json.RawMessage) (DashboardWidget, error) {
 	var w DashboardWidget
-	var keys map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &keys); err != nil || keys == nil {
-		return w, errors.New("widget must be an object")
+	keys, err := objectKeys(raw)
+	if err != nil {
+		return w, fmt.Errorf("widget: %v", err)
 	}
 	if _, has := keys["error"]; has {
 		return w, errors.New(`"error" is not a widget field`)
@@ -152,15 +182,18 @@ func checkIndex(i *int, max int) (int, error) {
 // mergeWidget applies the keys of patch to w: a given key replaces the value
 // (a nested filter is replaced whole), null removes the key.
 func mergeWidget(w DashboardWidget, patch json.RawMessage) (DashboardWidget, error) {
-	var keys map[string]json.RawMessage
-	if err := json.Unmarshal(patch, &keys); err != nil || keys == nil {
-		return w, errors.New("widget must be an object")
+	keys, err := objectKeys(patch)
+	if err != nil {
+		return w, fmt.Errorf("widget: %v", err)
 	}
 	if _, has := keys["error"]; has {
 		return w, errors.New(`"error" is not a widget field`)
 	}
-	if v, has := keys["id"]; has && string(v) != `"`+w.ID+`"` {
-		return w, errors.New("an update cannot change the widget id; remove and add instead")
+	if v, has := keys["id"]; has {
+		var id string
+		if json.Unmarshal(v, &id) != nil || id != w.ID {
+			return w, errors.New("an update cannot change the widget id; remove and add instead")
+		}
 	}
 	cur, err := json.Marshal(w)
 	if err != nil {
@@ -170,6 +203,8 @@ func mergeWidget(w DashboardWidget, patch json.RawMessage) (DashboardWidget, err
 	if err := json.Unmarshal(cur, &merged); err != nil {
 		return w, err
 	}
+	// A widget read with a Problem carries it as "error"; an update repairs it.
+	delete(merged, "error")
 	for k, v := range keys {
 		if bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
 			delete(merged, k)
@@ -197,6 +232,9 @@ func ApplyDashboardOps(data []byte, ops []DashboardOp) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := refuseUntargetedProblems(d, ops); err != nil {
+		return nil, err
+	}
 	d.Widgets = append([]DashboardWidget(nil), d.Widgets...)
 	for n, op := range ops {
 		if err := applyOp(&d, op); err != nil {
@@ -211,6 +249,24 @@ func ApplyDashboardOps(data []byte, ops []DashboardOp) ([]byte, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+// refuseUntargetedProblems refuses a patch that would silently rewrite a bad
+// widget: the tolerant read keeps it, but encoding drops its Problem and its
+// unknown keys. A widget with a problem must be updated or removed by an op.
+func refuseUntargetedProblems(d Dashboard, ops []DashboardOp) error {
+	targeted := map[string]bool{}
+	for _, op := range ops {
+		if op.Op == DashboardOpUpdate || op.Op == DashboardOpRemove {
+			targeted[op.ID] = true
+		}
+	}
+	for i, w := range d.Widgets {
+		if w.Problem != "" && (w.ID == "" || !targeted[w.ID]) {
+			return fmt.Errorf("widgets[%d] (id %q) has a problem that no op updates or removes: %s", i, w.ID, w.Problem)
+		}
+	}
+	return nil
 }
 
 func applyOp(d *Dashboard, op DashboardOp) error {
