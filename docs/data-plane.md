@@ -867,7 +867,7 @@ punctuation that follows a path, so fixing the first is not how the author learn
 How a KB behaves lives in the KB, not in the server that mounts it (D746): five people
 mounting the same KB get the same behaviour. `settings.yaml` at the KB root, beside
 `paths.yaml`, is the **only** place a KB's policy is set (D906): the server's `kbs[]` keeps the keys of the machine
-(`name`, `remote`) and the optional `branch` override. It carries three keys, and the write gate, the safe repairs and the doctor's cadence are not among them (D907):
+(`name`, `remote`) and the optional `branch` override. It carries four keys, and the write gate, the safe repairs and the doctor's cadence are not among them (D907):
 
 - `usage_stale_days`: days a skill or agent may go unused by every client before `kb_status.usage` counts it as stale
   (and `artifact_unused` flags it in Health, D1043). Default 42, minimum 7, and no value turns the signal off: a value under 7 is raised
@@ -886,6 +886,21 @@ mounting the same KB get the same behaviour. `settings.yaml` at the KB root, bes
   `settings.yaml` committed on the remote's default branch** (the working copy's file is parsed
   and shown, but changes nothing until it reaches the default branch), the first push creates the
   branch when the remote lacks it, and a name git would not accept is a finding. A `settings.yaml` on the default branch that does not parse and carries a top-level `branch` key (quoted or not) refuses writes until it is fixed there; one without the key is ignored by this reading. A git failure while reading the file refuses writes too, never counts as "no `branch`".
+- `depends_on`: the KBs this KB needs, a list of `{name, remote}` items. `name` is the mount name
+  of the other KB on the server; `remote` is its git remote, in the canonical `host/owner/name`
+  form or as a clone URL (ssh, https, `git://`), and is the **guard**: a mount name is not
+  identity (a rename, D772, or another server may map one name to another KB), so a KB mounted
+  under `name` whose origin differs is not the one meant. Remotes are compared through
+  `repoindex.NormalizeRemote`, the same normalization `paths.yaml` uses (`kb.NormalizeDeclaredRemote`):
+  case in owner and name is significant. Like `branch`, it is read **only from the `settings.yaml`
+  committed on the remote's default branch** (`KB.Relations`; `HEAD` for a KB with no remote), so
+  a working branch cannot widen a binding; the working copy's value is parsed and shown only. The
+  read is memoized on the ref's commit and answered from memory for a few seconds, so a change on
+  the default branch is seen within that bound. A git failure while reading is an error, never
+  "no relations". The parser keeps the key with its well-formed items: a non-mapping item, a
+  missing or unknown field, a name that is not a KB name, a remote that is not a git remote or a
+  name declared twice leaves out that item alone, with one finding `depends_on[<i>]`; a value that
+  is not a list leaves out the key. This key only declares: nothing resolves the names against the mounted KBs yet.
 
 Two things are derived and have no key (D906). A KB **declares secrets** when at least one YAML
 file directly under `secrets/` carries sops metadata (read, never decrypted): a mount of such a KB
