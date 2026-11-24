@@ -841,7 +841,7 @@ func serveHTTP(addr string, boot func(phase func(string)) kbBootstrap, authCfg c
 			byName[names[i]] = k
 		}
 		kbByName := func(n string) (*kb.KB, bool) { k, ok := byName[n]; return k, ok } // concept_transfer (D760)
-		wireMounts(kbs, byName, names, settingsCfg)                                            // cross-KB lookups (D772 aliases), before any KB serves
+		wireMounts(kbs, byName, names, settingsCfg)                                    // cross-KB lookups (D772 aliases), before any KB serves
 		for i, k := range kbs {
 			k := k
 			name := names[i]
