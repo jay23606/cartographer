@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -64,20 +65,20 @@ func TestCrossTargetTakesNoGitLock(t *testing.T) {
 func TestCrossIncomingSeesDiskChanges(t *testing.T) {
 	setCrossMaxAge(t, 0)
 	a, b := mountedPair(t, map[string]string{"old-a": "kb-a"})
-	if got := a.CrossIncoming("x"); len(got) != 0 {
-		t.Fatalf("no link yet: %v", got)
+	if got, err := a.CrossIncoming("x"); err != nil || len(got) != 0 {
+		t.Fatalf("no link yet: %v, %v", got, err)
 	}
 	writeConcept(t, b, "p1", "[[kb:kb-a/x]]\n")
 	writeConcept(t, b, "p2", "[[kb:old-a/x]] [[kb:kb-a/y]]\n")
 	writeConcept(t, a, "q", "[[kb:kb-a/x]]\n") // a link of a KB to itself is no inbound edge
 	want := []CrossRef{{KB: "kb-b", ID: "p1"}, {KB: "kb-b", ID: "p2"}}
-	if got := a.CrossIncoming("x"); !reflect.DeepEqual(got, want) {
-		t.Errorf("CrossIncoming = %v, want %v", got, want)
+	if got, err := a.CrossIncoming("x"); err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("CrossIncoming = %v, %v, want %v", got, err, want)
 	}
 	if err := os.Remove(filepath.Join(b.DataRoot(), "p1.md")); err != nil {
 		t.Fatal(err)
 	}
-	if got := a.CrossIncoming("x"); !reflect.DeepEqual(got, want[1:]) {
+	if got, _ := a.CrossIncoming("x"); !reflect.DeepEqual(got, want[1:]) {
 		t.Errorf("after a deletion on disk: %v", got)
 	}
 }
@@ -178,7 +179,7 @@ func TestCrossResolveBesideTransferLocking(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for j := 0; j < 20; j++ {
-				b.CrossIncoming("x")
+				_, _ = b.CrossIncoming("x")
 				b.CrossInboundDigest()
 				b.CrossTarget(CrossLink{KB: "kb-a", ID: "p"})
 			}
@@ -190,5 +191,77 @@ func TestCrossResolveBesideTransferLocking(t *testing.T) {
 	case <-done:
 	case <-time.After(30 * time.Second):
 		t.Fatal("deadlock")
+	}
+}
+
+// A reader that asks once per page (the orphan check) must not walk the other
+// KB's files each time: within crossMaxAge it is one lookup per mounted KB.
+func TestCrossIncomingDoesNotWalkWithinMaxAge(t *testing.T) {
+	setCrossMaxAge(t, time.Hour)
+	a, b := mountedPair(t, nil)
+	writeConcept(t, b, "p", "[[kb:kb-a/x]]\n")
+	if got, err := a.CrossIncoming("x"); err != nil || len(got) != 1 {
+		t.Fatalf("CrossIncoming = %v, %v", got, err)
+	}
+	before := b.graphStatsValidations()
+	for i := 0; i < 500; i++ {
+		_, _ = a.CrossIncoming("x")
+		a.CrossTarget(CrossLink{KB: "kb-b", ID: "p"})
+	}
+	if n := b.graphStatsValidations() - before; n != 0 {
+		t.Errorf("%d walks of the other KB within crossMaxAge", n)
+	}
+}
+
+// A KB whose graph cannot be validated is unknown, never absent: no partial
+// list, an error, and a digest that is not the empty "no incoming links" one.
+func TestCrossIncomingUnknownWhenAKBCannotBeRead(t *testing.T) {
+	setCrossMaxAge(t, 0)
+	a, b := mountedPair(t, nil)
+	b.Root = filepath.Join(t.TempDir(), "gone")
+	if _, err := b.GraphGeneration(); err == nil {
+		t.Skip("this filesystem lets the graph of a missing root validate")
+	}
+	if got, err := a.CrossIncoming("x"); err == nil {
+		t.Errorf("CrossIncoming = %v, nil; want an error", got)
+	}
+	d := a.CrossInboundDigest()
+	if d == "" || !strings.HasPrefix(d, "unknown:") {
+		t.Errorf("digest = %q; want an unknown marker, not the empty digest", d)
+	}
+	if a.CrossInboundDigest() != d || a.crossDigest.ok {
+		t.Error("an unknown digest must not be memoized")
+	}
+	if got := a.CrossTarget(CrossLink{KB: "kb-b", ID: "x"}); got.Err == nil || got.Exists {
+		t.Errorf("CrossTarget = %+v; want Err set and not Exists", got)
+	}
+}
+
+// Digests computed concurrently while a KB changes end on the newest one: an
+// older generation vector never overwrites a newer memo.
+func TestCrossInboundDigestConcurrent(t *testing.T) {
+	setCrossMaxAge(t, 0)
+	a, b := mountedPair(t, nil)
+	var wg sync.WaitGroup
+	for i := 0; i < 4; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 30; j++ {
+				a.CrossInboundDigest()
+			}
+		}()
+	}
+	for i := 0; i < 5; i++ {
+		writeConcept(t, b, fmt.Sprintf("p%d", i), "[[kb:kb-a/x]]\n")
+	}
+	wg.Wait()
+	want := a.CrossInboundDigest()
+	if len(want) == 0 || a.CrossInboundDigest() != want {
+		t.Errorf("digest after the writes = %q", want)
+	}
+	ins, _, err := a.inbounds("")
+	if err != nil || len(ins) != 5 {
+		t.Errorf("inbounds = %d, %v; want 5", len(ins), err)
 	}
 }
