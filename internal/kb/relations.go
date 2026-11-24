@@ -3,6 +3,7 @@ package kb
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -181,16 +182,26 @@ func (k *KB) forgetRelationsValidation() {
 }
 
 // relationsRef is the ref Relations reads: the remote's default branch when the
-// KB has a remote and the default branch is known, otherwise HEAD (a KB with no
-// remote has no other branch to widen from).
-func (k *KB) relationsRef() string {
+// KB has a remote, HEAD only for a KB with no remote (it has no other branch to
+// widen from). The default branch is the clone's refs/remotes/<remote>/HEAD, not
+// RemoteDefaultBranch: that one is the branch writes go to, which `branch` in
+// settings.yaml or kbs[].branch can set to a working branch. A KB with a remote
+// whose default branch is not known yet (before the first sync) is an error,
+// never HEAD, which can be a working branch.
+func (k *KB) relationsRef() (string, error) {
 	relationsGitReads.Add(1)
-	if remote, ok := k.hasRemote(); ok {
-		if def := k.RemoteDefaultBranch(); def != "" {
-			return remote + "/" + def
-		}
+	const remote = "origin"
+	if _, exists, err := gitx.RemoteURLIfConfigured(k.Root, remote); err != nil {
+		fmt.Fprintf(os.Stderr, "cartographer: read the origin of %s: %v\n", filepath.Base(k.Root), err)
+		return "", fmt.Errorf("could not read %s: git did not answer (details in the server log)", SettingsFile)
+	} else if !exists {
+		return "HEAD", nil
 	}
-	return "HEAD"
+	def, ok := gitx.RemoteHeadBranch(k.Root, remote)
+	if !ok {
+		return "", fmt.Errorf("could not read %s: the default branch of the remote is not known yet (it is learned at the first sync)", SettingsFile)
+	}
+	return remote + "/" + def, nil
 }
 
 // Relations returns the KB's relations as committed on the remote's default
@@ -205,7 +216,11 @@ func (k *KB) Relations() ([]Relation, error) {
 	if m.have && now.Sub(m.checkedAt) < relationsMaxAge {
 		return append([]Relation(nil), m.rels...), nil
 	}
-	ref := k.relationsRef()
+	ref, err := k.relationsRef()
+	if err != nil {
+		m.have = false
+		return nil, err
+	}
 	relationsGitReads.Add(1)
 	sha, err := gitx.HeadSHAAt(k.Root, ref)
 	if err != nil {
@@ -226,25 +241,44 @@ func (k *KB) Relations() ([]Relation, error) {
 	return append([]Relation(nil), rels...), nil
 }
 
-// NormalizedOrigin is the KB's origin in the normalized host/owner/name form
-// (RemoteInfo, credentials already redacted, then repoindex.NormalizeRemote),
-// and whether it has one. Memoized for relationsMaxAge, because RemoteInfo is a
-// git call. A KB with no remote, or one whose URL cannot be normalized, has none.
+// NormalizedOrigin is NormalizedOriginErr for a display: a failure to read the
+// origin reads as none. A decision (a relation's guard) uses NormalizedOriginErr,
+// where a failure is an error and never "no remote".
 func (k *KB) NormalizedOrigin() (string, bool) {
+	o, ok, err := k.NormalizedOriginErr()
+	if err != nil {
+		return "", false
+	}
+	return o, ok
+}
+
+// NormalizedOriginErr is the KB's origin in the normalized host/owner/name form
+// (the origin URL with credentials redacted, then repoindex.NormalizeRemote),
+// and whether it has one. Memoized for relationsMaxAge, because reading it is a
+// git call. A KB with no remote, or one whose URL cannot be normalized, has none
+// (ok false, nil error); a git failure reading the config is an error, and it is
+// never memoized, so it cannot pass for "no remote".
+func (k *KB) NormalizedOriginErr() (origin string, ok bool, err error) {
 	m := &k.relMemo
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	now := time.Now()
 	if m.originHave && now.Sub(m.originAt) < relationsMaxAge {
-		return m.origin, m.originOK
+		return m.origin, m.originOK, nil
 	}
 	relationsGitReads.Add(1)
+	raw, exists, err := gitx.RemoteURLIfConfigured(k.Root, "origin")
+	if err != nil {
+		m.originHave = false
+		fmt.Fprintf(os.Stderr, "cartographer: read the origin of %s: %v\n", filepath.Base(k.Root), err)
+		return "", false, fmt.Errorf("could not read the origin of the KB: git did not answer (details in the server log)")
+	}
 	m.origin, m.originOK = "", false
-	if raw, ok := k.RemoteInfo(); ok {
-		if norm, err := repoindex.NormalizeRemote(raw); err == nil {
+	if exists {
+		if norm, nerr := repoindex.NormalizeRemote(gitx.RedactRemoteURL(raw)); nerr == nil {
 			m.origin, m.originOK = string(norm), true
 		}
 	}
 	m.originHave, m.originAt = true, now
-	return m.origin, m.originOK
+	return m.origin, m.originOK, nil
 }
