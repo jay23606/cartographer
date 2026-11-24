@@ -20,6 +20,10 @@ func relationViewFor(ctx context.Context, k *kb.KB) (kb.RelationView, error) {
 	}, k)
 }
 
+// relationsUnavailableIssue is the one fixed line of sync_pull's issues when
+// the relations could not be read; the cause stays in the server log.
+const relationsUnavailableIssue = "relations unavailable: the KB's dependencies could not be read (details in the server log)"
+
 // pulledRelations is sync_pull's `relations` field: the view in its wire shape.
 func pulledRelations(ctx context.Context, k *kb.KB) (contract.Relations, error) {
 	v, err := relationViewFor(ctx, k)

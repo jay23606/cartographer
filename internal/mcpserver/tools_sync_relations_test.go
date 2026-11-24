@@ -32,7 +32,9 @@ type relFixture struct {
 	srv    map[string]*Server
 }
 
-func newRelFixture(t *testing.T, names []string, deps map[string][][2]string) *relFixture {
+// fresh names the KBs whose remote default branch is not known yet (before
+// their first sync).
+func newRelFixture(t *testing.T, names []string, deps map[string][][2]string, fresh ...string) *relFixture {
 	t.Helper()
 	f := &relFixture{byName: map[string]*kb.KB{}, srv: map[string]*Server{}}
 	for _, n := range names {
@@ -54,8 +56,14 @@ func newRelFixture(t *testing.T, names []string, deps map[string][][2]string) *r
 		}
 		// What the first sync leaves behind: the remote's default branch is
 		// known (Relations errors on a remote without one).
-		relGit(t, k, "update-ref", "refs/remotes/origin/main", "HEAD")
-		relGit(t, k, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		isFresh := false
+		for _, x := range fresh {
+			isFresh = isFresh || x == n
+		}
+		if !isFresh {
+			relGit(t, k, "update-ref", "refs/remotes/origin/main", "HEAD")
+			relGit(t, k, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		}
 		f.byName[n] = k
 	}
 	m := kb.NewMounts(f.byName, names, nil)
@@ -170,8 +178,30 @@ func TestSyncPullRelationsRemoteMismatch(t *testing.T) {
 	}
 }
 
+// unavailable asserts a sync_pull that still delivers its artifacts but says,
+// with one fixed issue and no `relations`, that the relations could not be read.
+func assertRelationsUnavailable(t *testing.T, text string, wantArtifacts bool) {
+	t.Helper()
+	var out map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(text), &out); err != nil {
+		t.Fatalf("not a manifest: %.200s", text)
+	}
+	if _, ok := out["relations"]; ok {
+		t.Errorf("relations must be absent when unavailable: %s", out["relations"])
+	}
+	if string(out["relations_unavailable"]) != "true" {
+		t.Errorf("relations_unavailable = %s", out["relations_unavailable"])
+	}
+	if !strings.Contains(string(out["issues"]), relationsUnavailableIssue) {
+		t.Errorf("issues = %s, want the fixed line", out["issues"])
+	}
+	if wantArtifacts && (len(out["artifacts"]) < 3 || string(out["artifacts"]) == "[]") {
+		t.Errorf("artifacts = %.100s, want them delivered", out["artifacts"])
+	}
+}
+
 // AC-kbrel-15
-func TestSyncPullRelationsErrorIsAnError(t *testing.T) {
+func TestSyncPullRelationsErrorIsUnavailableNotEmpty(t *testing.T) {
 	t.Parallel()
 	f := newRelFixture(t, []string{"client-kb-1", "core-kb"}, map[string][][2]string{
 		"client-kb-1": {{"core-kb", "core-kb"}},
@@ -182,11 +212,71 @@ func TestSyncPullRelationsErrorIsAnError(t *testing.T) {
 	if err := os.RemoveAll(filepath.Join(f.byName["core-kb"].Root, ".git")); err != nil {
 		t.Fatal(err)
 	}
-	_, text, isErr := f.pullRelations(t, adminCtx, "client-kb-1")
-	if !isErr {
-		t.Fatalf("want an error result, got a manifest: %.200s", text)
+	text, isErr := callJSON(t, f.srv["client-kb-1"], adminCtx, "sync_pull", `{}`)
+	if isErr {
+		t.Fatal(text)
 	}
-	if !strings.Contains(text, "relations unavailable") {
-		t.Errorf("error = %s", text)
+	assertRelationsUnavailable(t, text, true)
+}
+
+// A git failure reading the target's origin (not its settings) is the same.
+func TestSyncPullRelationsOriginReadFailure(t *testing.T) {
+	t.Parallel()
+	f := newRelFixture(t, []string{"client-kb-1", "core-kb"}, map[string][][2]string{
+		"client-kb-1": {{"core-kb", "core-kb"}},
+	})
+	// The target's origin was never read: edge() reads it, and git refuses.
+	if err := os.WriteFile(filepath.Join(f.byName["core-kb"].Root, ".git", "config"), []byte("[remote \"origin\"\n\turl = ["), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	text, isErr := callJSON(t, f.srv["client-kb-1"], adminCtx, "sync_pull", `{}`)
+	if isErr {
+		t.Fatal(text)
+	}
+	assertRelationsUnavailable(t, text, true)
+}
+
+// A KB with a remote whose default branch is not known yet, and a KB that is
+// not a git repository, still deliver what they can.
+func TestSyncPullRelationsUnavailableKeepsArtifacts(t *testing.T) {
+	t.Parallel()
+	fresh := newRelFixture(t, []string{"client-kb-1"}, nil, "client-kb-1")
+	text, isErr := callJSON(t, fresh.srv["client-kb-1"], adminCtx, "sync_pull", `{}`)
+	if isErr {
+		t.Fatal(text)
+	}
+	assertRelationsUnavailable(t, text, true)
+
+	bare := newRelFixture(t, []string{"client-kb-1"}, nil)
+	if err := os.RemoveAll(filepath.Join(bare.byName["client-kb-1"].Root, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	text, isErr = callJSON(t, bare.srv["client-kb-1"], adminCtx, "sync_pull", `{}`)
+	if isErr {
+		t.Fatal(text)
+	}
+	assertRelationsUnavailable(t, text, false)
+}
+
+// A git failure on a target the caller cannot read is not an error: the target
+// is never inspected, so the caller gets not_mounted like for an unmounted KB.
+func TestSyncPullRelationsUnreadableTargetGitFailureIsNotAnError(t *testing.T) {
+	t.Parallel()
+	deps := map[string][][2]string{"client-kb-1": {{"core-kb", "core-kb"}}}
+	f := newRelFixture(t, []string{"client-kb-1", "core-kb"}, deps)
+	if err := os.RemoveAll(filepath.Join(f.byName["core-kb"].Root, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	got, text, isErr := f.pullRelations(t, readsOnly("client-kb-1"), "client-kb-1")
+	if isErr {
+		t.Fatal(text)
+	}
+	absent := newRelFixture(t, []string{"client-kb-1"}, deps)
+	want, text, isErr := absent.pullRelations(t, readsOnly("client-kb-1"), "client-kb-1")
+	if isErr {
+		t.Fatal(text)
+	}
+	if got == nil || string(got) != string(want) {
+		t.Errorf("relations = %s, want the unmounted answer %s", got, want)
 	}
 }
