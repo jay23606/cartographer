@@ -2,6 +2,8 @@ package mcpserver
 
 import (
 	"encoding/json"
+	"io/fs"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -101,10 +103,23 @@ func TestResolveDashboardFilterSortLimit(t *testing.T) {
 		t.Fatalf("text matches only title and id: %+v", w)
 	}
 	over := map[string]string{}
-	for i := 0; i <= maxWhereClauses; i++ {
+	for i := 0; i <= maxWorkListFields; i++ {
 		over[strings.Repeat("k", i+1)] = "v"
 	}
-	if w := resolve(kb.DashboardWidget{Filter: &kb.DashboardFilter{Fields: over}}); w.Problem == "" {
-		t.Fatal("field filter above the where cap accepted")
+	if w := resolve(kb.DashboardWidget{Filter: &kb.DashboardFilter{Fields: over}}); w.Problem != "filter fields: 9 keys: at most 8" {
+		t.Fatalf("field filter cap message: %q", w.Problem)
+	}
+}
+
+// TestResolveDashboardSourceErrorHidesDataDir: a path error from a source
+// reaches the widget's error without the server's data directory.
+func TestResolveDashboardSourceErrorHidesDataDir(t *testing.T) {
+	t.Parallel()
+	_, k := workServer(t)
+	bad := &fs.PathError{Op: "open", Path: filepath.Join(k.Root, "visible", "a.md"), Err: fs.ErrPermission}
+	src := &dashSources{ctx: adminCtx, k: k, workDone: true, workErr: bad}
+	w := resolveWidget(src, kb.DashboardWidget{ID: "w", Type: "list"})
+	if w.Problem == "" || strings.Contains(w.Problem, k.Root) {
+		t.Fatalf("data dir in the widget error: %q", w.Problem)
 	}
 }

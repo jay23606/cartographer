@@ -224,7 +224,7 @@ func resolveWidget(src *dashSources, w kb.DashboardWidget) resolvedWidget {
 	}
 	rows, err := src.rows(source)
 	if err != nil {
-		return fail("%s source: %v", source, err)
+		return fail("%s source: %s", source, relPathErr(err, src.k.Root))
 	}
 	picked := make([]dashRow, 0, len(rows))
 	for _, r := range rows {
@@ -276,13 +276,10 @@ func fieldText(v any) (string, bool) {
 }
 
 // newDashFilter turns a widget filter into a row predicate. The field filter
-// is capped as work_list's where is.
+// is capped at maxWorkListFields keys.
 func newDashFilter(f *kb.DashboardFilter) (func(dashRow) bool, error) {
 	if f == nil {
 		return func(dashRow) bool { return true }, nil
-	}
-	if err := checkWhereClauses("dashboard widget", make([]string, len(f.Fields))); err != nil {
-		return nil, err
 	}
 	if n := len(f.Fields); n > maxWorkListFields {
 		return nil, fmt.Errorf("filter fields: %d keys: at most %d", n, maxWorkListFields)
