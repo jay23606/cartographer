@@ -867,7 +867,7 @@ punctuation that follows a path, so fixing the first is not how the author learn
 How a KB behaves lives in the KB, not in the server that mounts it (D746): five people
 mounting the same KB get the same behaviour. `settings.yaml` at the KB root, beside
 `paths.yaml`, is the **only** place a KB's policy is set (D906): the server's `kbs[]` keeps the keys of the machine
-(`name`, `remote`) and the optional `branch` override. It carries four keys, and the write gate, the safe repairs and the doctor's cadence are not among them (D907):
+(`name`, `remote`) and the optional `branch` override. It carries four keys (`depends_on`, the KBs this KB needs, is in `docs/kb-relations.md`), and the write gate, the safe repairs and the doctor's cadence are not among them (D907):
 
 - `usage_stale_days`: days a skill or agent may go unused by every client before `kb_status.usage` counts it as stale
   (and `artifact_unused` flags it in Health, D1043). Default 42, minimum 7, and no value turns the signal off: a value under 7 is raised
@@ -886,7 +886,6 @@ mounting the same KB get the same behaviour. `settings.yaml` at the KB root, bes
   `settings.yaml` committed on the remote's default branch** (the working copy's file is parsed
   and shown, but changes nothing until it reaches the default branch), the first push creates the
   branch when the remote lacks it, and a name git would not accept is a finding. A `settings.yaml` on the default branch that does not parse and carries a top-level `branch` key (quoted or not) refuses writes until it is fixed there; one without the key is ignored by this reading. A git failure while reading the file refuses writes too, never counts as "no `branch`".
-- `depends_on`: the KBs this KB needs, a list of `{name, remote}` items, read only from the remote's default branch; see `docs/kb-relations.md`.
 
 Two things are derived and have no key (D906). A KB **declares secrets** when at least one YAML
 file directly under `secrets/` carries sops metadata (read, never decrypted): a mount of such a KB
