@@ -273,6 +273,9 @@ func TestDashboardColumnsAreValues(t *testing.T) {
 		if err == nil || strings.Contains(err.Error(), "field names") || !strings.Contains(err.Error(), "column") {
 			t.Errorf("%s: %v", name, err)
 		}
+	}
+}
+
 // TestWriteDashboardRefusesSymlinkAndRemovesFolder: the write checks the read
 // does, and the folder goes with its last file.
 func TestWriteDashboardRefusesSymlinkAndRemovesFolder(t *testing.T) {
