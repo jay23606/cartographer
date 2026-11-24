@@ -33,6 +33,7 @@ const (
 	dashboardTitleMaxBytes = 120
 	dashboardDescMaxBytes  = 500
 	dashboardMaxLimit      = 200
+	dashboardMaxColumns    = 8
 	dashboardMaxFilterList = 20
 	dashboardMaxFields     = 10
 	dashboardMaxHorizon    = 365
@@ -110,11 +111,13 @@ type DashboardFilter struct {
 	Text     string            `yaml:"text,omitempty"      json:"text,omitempty"`
 }
 
-// ValidDashboardName reports whether name can name a dashboard file.
-func ValidDashboardName(name string) bool { return dashboardNameRE.MatchString(name) }
+// windowsDeviceRE bars the names Windows treats as devices (con.yaml is one).
+var windowsDeviceRE = regexp.MustCompile(`^(con|prn|aux|nul|com[1-9]|lpt[1-9])$`)
 
-// DashboardPath is the KB-relative, slash-separated path of a dashboard.
-func DashboardPath(name string) string { return DashboardsDir + "/" + name + ".yaml" }
+// ValidDashboardName reports whether name can name a dashboard file.
+func ValidDashboardName(name string) bool {
+	return dashboardNameRE.MatchString(name) && !windowsDeviceRE.MatchString(name)
+}
 
 // DashboardHash is the sha256 hex of a dashboard's bytes, the if_match token
 // of its writes. A missing dashboard (nil bytes) has hash "".
@@ -130,11 +133,9 @@ func DashboardHash(data []byte) string {
 func yamlKeys(t reflect.Type) map[string]bool {
 	keys := map[string]bool{}
 	for i := 0; i < t.NumField(); i++ {
-		tag := t.Field(i).Tag.Get("yaml")
-		if tag == "" || tag == "-" {
-			continue
+		if tag := strings.Split(t.Field(i).Tag.Get("yaml"), ",")[0]; tag != "" && tag != "-" {
+			keys[tag] = true
 		}
-		keys[strings.Split(tag, ",")[0]] = true
 	}
 	return keys
 }
@@ -178,16 +179,11 @@ func readDashboard(data []byte) (*dashboardReport, error) {
 	if err := yaml.Unmarshal(data, &root); err != nil {
 		return nil, fmt.Errorf("dashboard: not valid YAML: %v", err)
 	}
-	r := &dashboardReport{widgets: map[int][]string{}}
-	if root.Kind == 0 || len(root.Content) == 0 {
-		r.dash.Widgets = []DashboardWidget{}
+	r := &dashboardReport{widgets: map[int][]string{}, dash: Dashboard{Widgets: []DashboardWidget{}}}
+	if root.Kind == 0 || len(root.Content) == 0 || (root.Content[0].Kind == yaml.ScalarNode && root.Content[0].Tag == "!!null") {
 		return r, nil
 	}
 	doc := root.Content[0]
-	if doc.Kind == yaml.ScalarNode && doc.Tag == "!!null" {
-		r.dash.Widgets = []DashboardWidget{}
-		return r, nil
-	}
 	if doc.Kind != yaml.MappingNode {
 		return nil, errors.New("dashboard: not a mapping")
 	}
@@ -195,8 +191,14 @@ func readDashboard(data []byte) (*dashboardReport, error) {
 		r.file = append(r.file, fmt.Sprintf("unknown field %q", k))
 	}
 	var wnode *yaml.Node
+	topSeen := map[string]bool{}
 	for i := 0; i+1 < len(doc.Content); i += 2 {
 		k, v := doc.Content[i].Value, doc.Content[i+1]
+		if topSeen[k] {
+			r.file = append(r.file, fmt.Sprintf("field %q declared twice", k))
+			continue
+		}
+		topSeen[k] = true
 		switch k {
 		case "title", "description":
 			if v.Kind != yaml.ScalarNode {
@@ -213,9 +215,8 @@ func readDashboard(data []byte) (*dashboardReport, error) {
 		}
 	}
 	if len(r.dash.Title) > dashboardTitleMaxBytes || len(r.dash.Description) > dashboardDescMaxBytes {
-		r.file = append(r.file, fmt.Sprintf("title is at most %d bytes, description %d", dashboardTitleMaxBytes, dashboardDescMaxBytes))
+		r.file = append(r.file, "title or description is too long")
 	}
-	r.dash.Widgets = []DashboardWidget{}
 	if wnode == nil || (wnode.Kind == yaml.ScalarNode && wnode.Tag == "!!null") {
 		return r, nil
 	}
@@ -240,9 +241,11 @@ func readDashboard(data []byte) (*dashboardReport, error) {
 		if err := n.Decode(&w); err != nil {
 			r.widgetProblem(i, "%s", strings.ReplaceAll(strings.TrimPrefix(err.Error(), "yaml: unmarshal errors:\n  "), "\n  ", "; "))
 		}
-		if fn := mappingValue(n, "filter"); fn != nil && fn.Kind == yaml.MappingNode {
-			for _, k := range unknownKeys(fn, filterKeys) {
-				r.widgetProblem(i, "filter: unknown field %q", k)
+		for j := 0; j+1 < len(n.Content); j += 2 {
+			if fn := n.Content[j+1]; n.Content[j].Value == "filter" && fn.Kind == yaml.MappingNode {
+				for _, k := range unknownKeys(fn, filterKeys) {
+					r.widgetProblem(i, "filter: unknown field %q", k)
+				}
 			}
 		}
 		w.Problem = ""
@@ -255,15 +258,6 @@ func readDashboard(data []byte) (*dashboardReport, error) {
 		r.dash.Widgets[i].Problem = strings.Join(ps, "; ")
 	}
 	return r, nil
-}
-
-func mappingValue(n *yaml.Node, key string) *yaml.Node {
-	for i := 0; i+1 < len(n.Content); i += 2 {
-		if n.Content[i].Value == key {
-			return n.Content[i+1]
-		}
-	}
-	return nil
 }
 
 func oneOfString(s string, list []string) bool {
@@ -332,13 +326,19 @@ func checkWidget(w DashboardWidget, seen map[string]bool) []string {
 	if w.Limit < 0 || w.Limit > dashboardMaxLimit {
 		add("limit %d is not between 0 and %d", w.Limit, dashboardMaxLimit)
 	}
+	if len(w.Columns) > dashboardMaxColumns {
+		add("%d columns, the cap is %d", len(w.Columns), dashboardMaxColumns)
+	}
 	for _, c := range w.Columns {
-		if !dashboardFieldRE.MatchString(c) || len(w.Columns) > 8 {
-			add("columns are at most 8 field names, got %q", c)
+		if !dashboardFieldRE.MatchString(c) {
+			add("column %q is not a field name", c)
 		}
 	}
-	if (w.Type == "note") != (strings.TrimSpace(w.Text) != "") && (w.Type == "note" || w.Text != "") {
-		add("text belongs to a note, and a note needs text")
+	if w.Type != "note" && w.Text != "" {
+		add("text belongs to a note")
+	}
+	if w.Type == "note" && strings.TrimSpace(w.Text) == "" {
+		add("a note needs text")
 	}
 	if len(w.Text) > dashboardTextMaxBytes {
 		add("text is longer than %d bytes", dashboardTextMaxBytes)
@@ -458,7 +458,7 @@ func (kb *KB) ReadDashboard(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	rel := DashboardPath(name)
+	rel := DashboardsDir + "/" + name + ".yaml"
 	path := filepath.Join(dir, name+".yaml")
 	fi, lerr := os.Lstat(path)
 	if !exists || errors.Is(lerr, os.ErrNotExist) {

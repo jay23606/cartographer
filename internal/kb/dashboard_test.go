@@ -56,6 +56,10 @@ func TestValidateDashboardAcceptsAndRejects(t *testing.T) {
 		{"note without text", "widgets:\n  - id: a\n    type: note\n", "a note needs text"},
 		{"bad group_by", "widgets:\n  - id: a\n    type: kanban\n    group_by: colour\n", `group_by "colour"`},
 		{"width not a number", "widgets:\n  - id: a\n    type: stat\n    width: wide\n", "widgets[0]"},
+		{"text on a stat, blank", "widgets:\n  - id: a\n    type: stat\n    text: \" \"\n", "text belongs to a note"},
+		{"duplicate top key", "title: a\ntitle: b\n", `field "title" declared twice`},
+		{"duplicate widgets key", "widgets: []\nwidgets: []\n", `field "widgets" declared twice`},
+		{"too many columns", "widgets:\n  - id: a\n    type: list\n    columns: [a, b, c, d, e, f, g, h, i]\n", "9 columns, the cap is 8"},
 		{"not a mapping", "- a\n- b\n", "not a mapping"},
 		{"not yaml", "a: [", "not valid YAML"},
 		{"too big", "title: " + strings.Repeat("x", MaxDashboardBytes), "the cap is"},
@@ -88,7 +92,7 @@ func TestValidDashboardName(t *testing.T) {
 			t.Errorf("%q should be valid", n)
 		}
 	}
-	for _, n := range []string{"", "-a", "A", "a_b", "a.b", "../x", "a/b", strings.Repeat("a", 49)} {
+	for _, n := range []string{"", "-a", "A", "a_b", "a.b", "con", "nul", "aux", "prn", "com1", "lpt9", "../x", "a/b", strings.Repeat("a", 49)} {
 		if ValidDashboardName(n) {
 			t.Errorf("%q should be invalid", n)
 		}
