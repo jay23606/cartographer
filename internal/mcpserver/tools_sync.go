@@ -236,20 +236,26 @@ func toolSyncPull(k *kb.KB, bundleFS fs.FS, routedMount bool, signer ed25519.Pri
 			if len(placeholders) > 0 {
 				result["placeholders"] = placeholders
 			}
+			var relationIssues []string
 			registry, registryIssues := pulledPathRegistry(k)
 			if registry != nil {
 				result["path_registry"] = registry
 			}
-			// Always present, empty arrays when the KB declares none: an absent
-			// field means a server that predates it. A failed read is an error,
-			// never "no relations" (the client changes nothing). Outside
-			// revision and every signature, like path_registry.
-			relations, err := pulledRelations(ctx, k)
-			if err != nil {
-				return errorResult(fmt.Sprintf("sync_pull: relations unavailable: %v", err)), nil
+			// Present with empty arrays when the KB declares none: an absent
+			// field means a server that predates it. A failed read must never
+			// look like "no relations" (the client would drop a binding it
+			// should keep), and must not block the artifacts either (a fresh
+			// clone has no origin/HEAD before its first sync): the field is
+			// replaced by relations_unavailable and one fixed line in issues.
+			// Outside revision and every signature, like path_registry.
+			relations, rerr := pulledRelations(ctx, k)
+			if rerr != nil {
+				result["relations_unavailable"] = true
+				relationIssues = append(relationIssues, relationsUnavailableIssue)
+			} else {
+				result["relations"] = relations
 			}
-			result["relations"] = relations
-			if issues := append(append(append([]string(nil), m.Issues...), registryIssues...), excluded...); len(issues) > 0 {
+			if issues := append(append(append(append([]string(nil), m.Issues...), registryIssues...), excluded...), relationIssues...); len(issues) > 0 {
 				result["issues"] = issues
 			}
 			// Absent means github: a client or server that predates the setting
