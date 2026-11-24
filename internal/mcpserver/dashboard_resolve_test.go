@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -210,5 +211,28 @@ func TestResolveGroupByTypeAndField(t *testing.T) {
 	bad := kb.Dashboard{Widgets: []kb.DashboardWidget{{ID: "s", Type: "stat", Show: "groups"}}}
 	if w := resolveDashboard(adminCtx, k, &conformanceCache{}, bad).Widgets[0]; w.Problem == "" {
 		t.Fatal("show groups without group_by accepted")
+	}
+}
+
+// TestResolveDashboardCapsEntriesAcrossGroups: the limit is per group, so a
+// grouped widget is also capped as a whole; group totals stay true.
+func TestResolveDashboardCapsEntriesAcrossGroups(t *testing.T) {
+	t.Parallel()
+	_, k := workServer(t)
+	for i := 0; i < 250; i++ {
+		writeKBFile(t, k, fmt.Sprintf("visible/bulk%03d.md", i),
+			fmt.Sprintf("---\ntype: Bulk\ntitle: Bulk %d\nteam: t%d\n---\n# Bulk\n", i, i%5))
+	}
+	d := kb.Dashboard{Widgets: []kb.DashboardWidget{
+		{ID: "g", Type: "list", Source: "concepts", GroupBy: "field:team", Filter: &kb.DashboardFilter{Type: []string{"Bulk"}}},
+	}}
+	w := resolveDashboard(adminCtx, k, &conformanceCache{}, d).Widgets[0]
+	shown, total := 0, 0
+	for _, g := range w.Groups {
+		shown += len(g.Entries)
+		total += g.Total
+	}
+	if shown != dashboardMaxLimit || total != 250 || w.Total != 250 {
+		t.Fatalf("shown %d total %d widget total %d", shown, total, w.Total)
 	}
 }

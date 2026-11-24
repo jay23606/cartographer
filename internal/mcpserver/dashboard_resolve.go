@@ -261,10 +261,18 @@ func resolveWidget(src *dashSources, w kb.DashboardWidget) resolvedWidget {
 		limit = dashboardMaxLimit
 	}
 	readKeys := append(widgetFieldKeys(w), "waiting_on", "review_after")
+	// budget caps the entries of the whole widget across its groups: the
+	// limit applies per group, and a grouped widget would otherwise return
+	// every visible row. Group totals stay true; only entries are trimmed.
+	budget := dashboardMaxLimit
 	shape := func(rows []dashRow) []dashboardEntry {
 		if len(rows) > limit {
 			rows = rows[:limit]
 		}
+		if len(rows) > budget {
+			rows = rows[:budget]
+		}
+		budget -= len(rows)
 		entries := make([]dashboardEntry, 0, len(rows))
 		for _, r := range rows {
 			e := r.out
