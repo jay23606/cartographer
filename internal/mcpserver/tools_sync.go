@@ -240,6 +240,15 @@ func toolSyncPull(k *kb.KB, bundleFS fs.FS, routedMount bool, signer ed25519.Pri
 			if registry != nil {
 				result["path_registry"] = registry
 			}
+			// Always present, empty arrays when the KB declares none: an absent
+			// field means a server that predates it. A failed read is an error,
+			// never "no relations" (the client changes nothing). Outside
+			// revision and every signature, like path_registry.
+			relations, err := pulledRelations(ctx, k)
+			if err != nil {
+				return errorResult(fmt.Sprintf("sync_pull: relations unavailable: %v", err)), nil
+			}
+			result["relations"] = relations
 			if issues := append(append(append([]string(nil), m.Issues...), registryIssues...), excluded...); len(issues) > 0 {
 				result["issues"] = issues
 			}
