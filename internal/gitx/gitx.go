@@ -1138,8 +1138,6 @@ func (e *RemoteTimeoutError) Error() string {
 	return fmt.Sprintf("git remote %q did not answer within %s (unreachable or blocked)", e.Remote, e.After)
 }
 
-// RemoteBranchExists reports whether refs/remotes/<remote>/<branch> exists.
-// Call Fetch first when the answer must reflect the forge's current state.
 // RemoteHeadBranch is the remote's default branch as the clone recorded it in
 // refs/remotes/<remote>/HEAD (git clone and the ls-remote probe of a sync set
 // it), "" and false when it is not known. Unlike a sync's canonical branch it
@@ -1160,6 +1158,8 @@ func RemoteHeadBranch(dir, remote string) (string, bool) {
 	return b, true
 }
 
+// RemoteBranchExists reports whether refs/remotes/<remote>/<branch> exists.
+// Call Fetch first when the answer must reflect the forge's current state.
 func RemoteBranchExists(dir, remote, branch string) bool {
 	if remote == "" {
 		remote = "origin"

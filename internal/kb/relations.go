@@ -49,7 +49,8 @@ func NormalizeDeclaredRemote(raw string) (string, error) {
 	}
 	norm, err := repoindex.NormalizeRemote(raw)
 	if err != nil || strings.Count(string(norm), "/") < 2 {
-		return "", fmt.Errorf("remote %q is not a git remote (expected host/owner/name or a clone URL)", declared)
+		// The declared text can carry credentials and reaches a settings finding.
+		return "", fmt.Errorf("remote %q is not a git remote (expected host/owner/name or a clone URL)", gitx.RedactRemoteURL(declared))
 	}
 	return string(norm), nil
 }
@@ -201,7 +202,9 @@ func (k *KB) relationsRef() (string, error) {
 	if !ok {
 		return "", fmt.Errorf("could not read %s: the default branch of the remote is not known yet (it is learned at the first sync)", SettingsFile)
 	}
-	return remote + "/" + def, nil
+	// Fully qualified: a tag or a local branch named origin/<def> wins over
+	// refs/remotes/ in a short name, and would be read in its place.
+	return "refs/remotes/" + remote + "/" + def, nil
 }
 
 // Relations returns the KB's relations as committed on the remote's default

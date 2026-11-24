@@ -36,7 +36,7 @@ func TestRelationsAtDefaultBranchOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []Relation{{Name: "core-kb", Remote: "git.example.com/org/core"}}
-	got, err := k.RelationsAt("origin/main")
+	got, err := k.RelationsAt("refs/remotes/origin/main")
 	if err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("RelationsAt(origin/main) = %v, %v", got, err)
 	}
@@ -212,5 +212,54 @@ func TestNormalizedOriginErrIsNotNoRemote(t *testing.T) {
 	}
 	if o, ok, err := k.NormalizedOriginErr(); err != nil || !ok || o != "git.example.com/org/core" {
 		t.Fatalf("after recovery: %q, %v, %v", o, ok, err)
+	}
+}
+
+// A tag or a local branch named origin/<default> wins over refs/remotes/ in a
+// short name: Relations must read the remote-tracking ref, not it.
+func TestRelationsAmbiguousTagDoesNotWin(t *testing.T) {
+	t.Parallel()
+	if !haveGit() {
+		t.Skip("git not in PATH")
+	}
+	k, bare := remoteWithDefault(t)
+	commitRawSettings(t, bare, "main", relSettings)
+	if _, err := k.SyncIn(); err != nil {
+		t.Fatalf("SyncIn: %v", err)
+	}
+	// A commit with another depends_on, tagged origin/main.
+	other := "depends_on:\n  - {name: other-kb, remote: git.example.com/org/other}\n"
+	if err := os.WriteFile(filepath.Join(k.Root, SettingsFile), []byte(other), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	gitHere(t, k.Root, "add", SettingsFile)
+	gitHere(t, k.Root, "-c", "user.name=user", "-c", "user.email=user@example.com", "commit", "-q", "-m", "other")
+	gitHere(t, k.Root, "tag", "origin/main")
+	got, err := k.Relations()
+	if err != nil || len(got) != 1 || got[0].Name != "core-kb" {
+		t.Fatalf("Relations = %v, %v: the tag origin/main was read", got, err)
+	}
+}
+
+// A hand-added remote has no origin/HEAD until the first SyncIn, which fetches
+// before it asks the remote for its default branch and records it.
+func TestRelationsKnownAfterTheFirstSyncIn(t *testing.T) {
+	t.Parallel()
+	if !haveGit() {
+		t.Skip("git not in PATH")
+	}
+	k, bare := remoteWithDefault(t)
+	commitRawSettings(t, bare, "main", relSettings)
+	gitHere(t, k.Root, "remote", "set-head", "origin", "--delete")
+	if _, err := k.Relations(); err == nil {
+		t.Fatal("origin/HEAD was deleted: Relations should not know the default branch yet")
+	}
+	k.forgetRelationsValidation()
+	if _, err := k.SyncIn(); err != nil {
+		t.Fatalf("SyncIn: %v", err)
+	}
+	got, err := k.Relations()
+	if err != nil || len(got) != 1 || got[0].Name != "core-kb" {
+		t.Fatalf("after the first SyncIn: %v, %v", got, err)
 	}
 }
