@@ -26,6 +26,8 @@ func TestParseCrossLink(t *testing.T) {
 		{"kb:kb-b//x", true, CrossLink{KB: "kb-b", ID: "/x"}, true},
 		{"kb:kb-b@/x", true, CrossLink{KB: "kb-b", ID: "x"}, true},
 		{"kb:/x", true, CrossLink{ID: "x"}, true},
+		{"kb:a@s@t/x", true, CrossLink{Server: "s@t", KB: "a", ID: "x"}, true},
+		{"kb:a@ s/x", true, CrossLink{Server: " s", KB: "a", ID: "x"}, true},
 	}
 	for _, c := range cases {
 		got, ok := ParseCrossLink(c.raw)
@@ -43,9 +45,10 @@ func TestParseCrossLink(t *testing.T) {
 // AC-cross-kb-links-6
 func TestExtractCrossLinks(t *testing.T) {
 	body := "[[kb:kb-b/a|label]] [[kb:kb-b/a#sec]] [[kb:kb-b/b]] [[kb:bad name/x]] [[kb:bad name/x]]\n" +
-		"`[[kb:kb-b/code]]`\n```\n[[kb:kb-b/fenced]]\n```\n[md](kb:kb-b/href) [[plain]]\n"
+		"`[[kb:kb-b/code]]`\n```\n[[kb:kb-b/fenced]]\n```\n[md](kb:kb-b/href) [[plain]]\n[[kb:a@/b]] [[kb:a@/b.md]]\n"
 	got := ExtractCrossLinks(body)
-	want := []CrossLink{{KB: "kb-b", ID: "a"}, {KB: "kb-b", ID: "b"}, {KB: "bad name", ID: "x", Malformed: true}}
+	want := []CrossLink{{KB: "kb-b", ID: "a"}, {KB: "kb-b", ID: "b"}, {KB: "bad name", ID: "x", Malformed: true},
+		{KB: "a", ID: "b", Malformed: true}}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("ExtractCrossLinks = %+v, want %+v", got, want)
 	}

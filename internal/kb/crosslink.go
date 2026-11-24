@@ -35,7 +35,7 @@ func ParseCrossLink(raw string) (l CrossLink, ok bool) {
 	head, id, hasID := strings.Cut(rest, "/")
 	name, server, hasServer := strings.Cut(head, "@")
 	l.KB, l.Server = name, server
-	l.Malformed = hasServer && server == ""
+	l.Malformed = hasServer && !kbNameRe.MatchString(server)
 	id = strings.TrimSuffix(id, ".md")
 	l.ID = okf.ConceptID(id)
 	l.Malformed = l.Malformed || !hasID || !kbNameRe.MatchString(l.KB) || okf.ValidateID(id) != nil
@@ -53,7 +53,8 @@ func ExtractCrossLinks(body string) []CrossLink {
 		if !ok {
 			continue
 		}
-		key := m[1]
+		// The key is normalised alike for both: ".md" never makes a second link.
+		key := strings.TrimSuffix(m[1], ".md")
 		if !l.Malformed {
 			key = l.Server + "@" + l.KB + "/" + string(l.ID)
 		}
