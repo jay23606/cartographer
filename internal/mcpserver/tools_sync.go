@@ -250,6 +250,8 @@ func toolSyncPull(k *kb.KB, bundleFS fs.FS, routedMount bool, signer ed25519.Pri
 			// Outside revision and every signature, like path_registry.
 			relations, rerr := pulledRelations(ctx, k)
 			if rerr != nil {
+				// The issue line is fixed; the cause goes to the log (gitx has scrubbed it).
+				fmt.Fprintf(os.Stderr, "cartographer: warn: sync_pull %s: relations unavailable: %v\n", kbName, rerr)
 				result["relations_unavailable"] = true
 				relationIssues = append(relationIssues, relationsUnavailableIssue)
 			} else {
