@@ -18,9 +18,18 @@ import (
 // raw JSON by KB name.
 func (f *relFixture) kbListRows(t *testing.T, ctx context.Context) map[string]json.RawMessage {
 	t.Helper()
+	return f.kbListRowsWith(t, ctx, nil)
+}
+
+// kbListRowsWith is kbListRows after mutate has changed the mounted server.
+func (f *relFixture) kbListRowsWith(t *testing.T, ctx context.Context, mutate func(*MultiKBServer)) map[string]json.RawMessage {
+	t.Helper()
 	multi := NewMultiKBServer("test")
 	for name, k := range f.byName {
 		multi.MountKB(name, func(s *Server) { RegisterKBTools(s, k, Deps{BundleFS: fstest.MapFS{}}) })
+	}
+	if mutate != nil {
+		mutate(multi)
 	}
 	rr := httptest.NewRecorder()
 	multi.uiListKBs(rr, httptest.NewRequest(http.MethodGet, UIAPIPrefix+"/kbs", nil).WithContext(ctx))
@@ -176,5 +185,64 @@ func TestKBListRelationsWholeOnly(t *testing.T) {
 			}
 			check("failing read")
 		}
+	}
+}
+
+// A row that is not ready never computes its relations: a failing read would
+// repeat its git calls on every poll.
+func TestKBListRelationsOnlyForReadyKBs(t *testing.T) {
+	t.Parallel()
+	f := newRelFixture(t, []string{"client-kb-1", "core-kb"}, map[string][][2]string{
+		"client-kb-1": {{"core-kb", "core-kb"}},
+	})
+	f.byName["core-kb"].NormalizedOrigin()
+	if err := os.RemoveAll(filepath.Join(f.byName["core-kb"].Root, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	rows := f.kbListRowsWith(t, adminCtx, func(m *MultiKBServer) {
+		for i := range m.kbs {
+			m.kbs[i].Status = "degraded"
+		}
+	})
+	for _, n := range []string{"client-kb-1", "core-kb"} {
+		for _, key := range []string{"relations", "relations_unavailable"} {
+			if v, ok := rowField(t, rows[n], key); ok {
+				t.Errorf("not-ready row %s carries %s = %s", n, key, v)
+			}
+		}
+	}
+}
+
+// A KB with a remote whose default branch is not known yet cannot read its
+// relations, even when it declares none: the row says so, deliberately.
+func TestKBListRelationsUnavailableWithoutDefaultBranch(t *testing.T) {
+	t.Parallel()
+	f := newRelFixture(t, []string{"lone-kb"}, nil)
+	relGit(t, f.byName["lone-kb"], "symbolic-ref", "--delete", "refs/remotes/origin/HEAD")
+	rows := f.kbListRows(t, adminCtx)
+	if v, ok := rowField(t, rows["lone-kb"], "relations_unavailable"); !ok || string(v) != "true" {
+		t.Errorf("row = %s", rows["lone-kb"])
+	}
+	if _, ok := rowField(t, rows["lone-kb"], "relations"); ok {
+		t.Errorf("row carries relations: %s", rows["lone-kb"])
+	}
+}
+
+// Two callers on one KB: the one who cannot read the target gets the bytes of
+// a KB whose target is not mounted at all.
+func TestKBListRelationsReaderAndNonReader(t *testing.T) {
+	t.Parallel()
+	deps := map[string][][2]string{"client-kb-1": {{"core-kb", "core-kb"}}}
+	withCore := newRelFixture(t, []string{"client-kb-1", "core-kb"}, deps)
+	without := newRelFixture(t, []string{"client-kb-1"}, deps)
+
+	seen, _ := rowField(t, withCore.kbListRows(t, readsOnly("client-kb-1", "core-kb"))["client-kb-1"], "relations")
+	if !strings.Contains(string(seen), `"resolved":["core-kb"]`) {
+		t.Errorf("reader of the target: %s", seen)
+	}
+	blind, _ := rowField(t, withCore.kbListRows(t, readsOnly("client-kb-1"))["client-kb-1"], "relations")
+	absent, _ := rowField(t, without.kbListRows(t, readsOnly("client-kb-1"))["client-kb-1"], "relations")
+	if string(blind) != string(absent) || !strings.Contains(string(blind), `"reason":"not_mounted"`) {
+		t.Errorf("non-reader = %s, unmounted = %s", blind, absent)
 	}
 }

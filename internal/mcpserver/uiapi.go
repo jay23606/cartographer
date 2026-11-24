@@ -172,14 +172,16 @@ func (m *MultiKBServer) uiListKBs(w http.ResponseWriter, r *http.Request) {
 			Artifacts:    uiArtifactsVisible(ctx, srv.kbRef),
 			Secrets:      uiSecretsVisible(ctx, srv.kbRef),
 		}
-		if WholeVisible(ctx, srv.kbRef, false) {
-			if v, err := relationViewFor(ctx, srv.kbRef); err != nil {
-				row.RelationsUnavailable = true
-			} else if len(v.Declared) > 0 {
-				row.Relations = &v
-			}
-		}
 		if row.Ready {
+			// Only a ready KB: an error is not memoized, so a KB that cannot
+			// read its relations would repeat its git calls on every poll.
+			if WholeVisible(ctx, srv.kbRef, false) {
+				if v, err := relationViewFor(ctx, srv.kbRef); err != nil {
+					row.RelationsUnavailable = true
+				} else if len(v.Declared) > 0 {
+					row.Relations = &v
+				}
+			}
 			if n, ok := uiVisibleTotal(ctx, srv.kbRef); ok {
 				row.ConceptsTotal, row.ClusterThreshold = &n, kb.ClusterThreshold
 			}
