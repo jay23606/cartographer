@@ -60,7 +60,7 @@ func TestValidateDashboardAcceptsAndRejects(t *testing.T) {
 		{"text on a stat, blank", "widgets:\n  - id: a\n    type: stat\n    text: \" \"\n", "text belongs to a note"},
 		{"duplicate top key", "title: a\ntitle: b\n", `field "title" declared twice`},
 		{"duplicate widgets key", "widgets: []\nwidgets: []\n", `field "widgets" declared twice`},
-		{"too many columns", "widgets:\n  - id: a\n    type: list\n    columns: [" + strings.Repeat("a, ", 50) + "b]\n", "51 columns, the cap is 50"},
+		{"too many columns", "widgets:\n  - id: a\n    type: list\n    columns: [a, b, c, d, e, f, g, h, i]\n", "9 columns, the cap is 8"},
 		{"not a mapping", "- a\n- b\n", "not a mapping"},
 		{"not yaml", "a: [", "not valid YAML"},
 		{"too big", "title: " + strings.Repeat("x", MaxDashboardBytes), "the cap is"},
@@ -252,14 +252,14 @@ func TestReadDashboardRefusesSymlink(t *testing.T) {
 
 // TestDashboardColumnsAreValues: a kanban column is a value of the group-by
 // field, so a space or a number is fine; an empty, long or control-character
-// value, or more than 50, is refused with a message that says values.
+// value, or more than 8, is refused with a message that says values.
 func TestDashboardColumnsAreValues(t *testing.T) {
 	t.Parallel()
 	ok := "widgets:\n  - id: k\n    type: kanban\n    columns: [open, in progress, \"2026\", Done now]\n"
 	if err := ValidateDashboard([]byte(ok)); err != nil {
 		t.Fatalf("values refused: %v", err)
 	}
-	many := make([]string, 51)
+	many := make([]string, 9)
 	for i := range many {
 		many[i] = fmt.Sprintf("c%d", i)
 	}

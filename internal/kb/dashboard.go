@@ -37,7 +37,7 @@ const (
 	dashboardMaxFilterList  = 20
 	dashboardMaxFields      = 10
 	dashboardMaxHorizon     = 365
-	dashboardMaxColumns     = 50
+	dashboardMaxColumns     = 8
 	dashboardColumnMaxBytes = 200
 )
 
