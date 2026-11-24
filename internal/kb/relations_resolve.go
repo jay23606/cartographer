@@ -56,28 +56,36 @@ type relationEdge struct {
 
 // edge resolves one declared relation of node. reason is empty for a
 // candidate. An unreadable target is indistinguishable from an unmounted one:
-// no field of the result differs, and the target is not inspected.
-func (env RelationEnv) edge(node *KB, rel Relation) (relationEdge, string) {
+// no field of the result differs, and the target is not inspected. A git
+// failure reading an origin is an error, never a reason.
+func (env RelationEnv) edge(node *KB, rel Relation) (relationEdge, string, error) {
 	selfName := node.MountName()
 	if env.Mounts == nil {
-		return relationEdge{}, RelationNotMounted
+		return relationEdge{}, RelationNotMounted, nil
 	}
 	cur := env.Mounts.Canonical(rel.Name)
-	if own, ok := node.NormalizedOrigin(); (selfName != "" && cur == selfName) || (ok && own == rel.Remote) {
-		return relationEdge{}, RelationSelf
+	own, ownOK, err := node.NormalizedOriginErr()
+	if err != nil {
+		return relationEdge{}, "", err
+	}
+	if (selfName != "" && cur == selfName) || (ownOK && own == rel.Remote) {
+		return relationEdge{}, RelationSelf, nil
 	}
 	t, ok := env.Mounts.Lookup(rel.Name)
 	if !ok || (env.Readable != nil && !env.Readable(cur)) {
-		return relationEdge{}, RelationNotMounted
+		return relationEdge{}, RelationNotMounted, nil
 	}
-	origin, ok := t.NormalizedOrigin()
+	origin, ok, err := t.NormalizedOriginErr()
+	if err != nil {
+		return relationEdge{}, "", err
+	}
 	if !ok {
-		return relationEdge{}, RelationNoRemote
+		return relationEdge{}, RelationNoRemote, nil
 	}
 	if origin != rel.Remote {
-		return relationEdge{}, RelationRemoteMismatch
+		return relationEdge{}, RelationRemoteMismatch, nil
 	}
-	return relationEdge{target: t, name: cur}, ""
+	return relationEdge{target: t, name: cur}, "", nil
 }
 
 // walkResult is what one depth-first walk from a direct edge found.
@@ -106,7 +114,10 @@ func (env RelationEnv) walk(self *KB, start relationEdge, entered map[string]boo
 			return err
 		}
 		for _, r := range rels {
-			next, reason := env.edge(e.target, r)
+			next, reason, err := env.edge(e.target, r)
+			if err != nil {
+				return err
+			}
 			if reason != "" || seen[next.name] {
 				continue
 			}
@@ -151,7 +162,10 @@ func ResolveRelations(env RelationEnv, self *KB) (RelationView, error) {
 		} else {
 			looked[r.Name] = true
 		}
-		e, reason := env.edge(self, r)
+		e, reason, err := env.edge(self, r)
+		if err != nil {
+			return RelationView{}, err
+		}
 		if reason == "" && followed[e.name] {
 			continue // two declared names reaching one target count once
 		}
