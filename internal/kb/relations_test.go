@@ -148,3 +148,69 @@ func TestNormalizedOrigin(t *testing.T) {
 		t.Fatalf("origin = %q, %v", o, ok)
 	}
 }
+
+// The default branch is the clone's origin/HEAD, not the branch writes go to:
+// a configured working branch must not widen a binding (decision 3).
+func TestRelationsIgnoreAConfiguredWorkingBranch(t *testing.T) {
+	t.Parallel()
+	if !haveGit() {
+		t.Skip("git not in PATH")
+	}
+	k, bare := remoteWithDefault(t)
+	commitRawSettings(t, bare, "main", relSettings)
+	commitRawSettings(t, bare, "work", "depends_on:\n  - {name: other-kb, remote: git.example.com/org/other}\n")
+	if _, err := k.SyncIn(); err != nil {
+		t.Fatalf("SyncIn: %v", err)
+	}
+	// What `branch: work` (or kbs[].branch) does to the branch writes go to.
+	k.setCanonical("work", BranchSourceSettings)
+	if got := k.RemoteDefaultBranch(); got != "work" {
+		t.Fatalf("setup: RemoteDefaultBranch = %q", got)
+	}
+	got, err := k.Relations()
+	if err != nil || len(got) != 1 || got[0].Name != "core-kb" {
+		t.Fatalf("Relations = %v, %v: the working branch widened the binding", got, err)
+	}
+}
+
+// A KB with a remote and no known default branch has no relations to read yet:
+// an error, never HEAD, which can be a working branch.
+func TestRelationsRemoteWithoutKnownDefaultIsAnError(t *testing.T) {
+	t.Parallel()
+	if !haveGit() {
+		t.Skip("git not in PATH")
+	}
+	k, _ := setupKBWithRemote(t) // a remote added by hand: no origin/HEAD yet
+	commitSettingsHere(t, k, relSettings)
+	if got, err := k.Relations(); err == nil {
+		t.Fatalf("Relations = %v with no known default branch, want an error", got)
+	}
+}
+
+func TestNormalizedOriginErrIsNotNoRemote(t *testing.T) {
+	if !haveGit() {
+		t.Skip("git not in PATH")
+	}
+	old := relationsMaxAge
+	relationsMaxAge = time.Hour
+	t.Cleanup(func() { relationsMaxAge = old })
+	k := newTestKB(t)
+	gitHere(t, k.Root, "remote", "add", "origin", "https://git.example.com/org/core.git")
+	away := filepath.Join(k.Root, ".git-away")
+	if err := os.Rename(filepath.Join(k.Root, ".git"), away); err != nil {
+		t.Fatal(err)
+	}
+	if o, ok, err := k.NormalizedOriginErr(); err == nil {
+		t.Fatalf("a failing git read as no remote: %q, %v", o, ok)
+	}
+	if o, ok := k.NormalizedOrigin(); ok || o != "" {
+		t.Fatalf("NormalizedOrigin = %q, %v on a failure", o, ok)
+	}
+	// The failure was not kept: once git answers, so does the origin.
+	if err := os.Rename(away, filepath.Join(k.Root, ".git")); err != nil {
+		t.Fatal(err)
+	}
+	if o, ok, err := k.NormalizedOriginErr(); err != nil || !ok || o != "git.example.com/org/core" {
+		t.Fatalf("after recovery: %q, %v, %v", o, ok, err)
+	}
+}
