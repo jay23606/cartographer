@@ -20,8 +20,8 @@ const dashboardWidgetDoc = "Widget fields: id (slug), type (kanban|list|stat|age
 type dashboardListEntry struct {
 	Name    string `json:"name"`
 	Title   string `json:"title,omitempty"`
-	Widgets int    `json:"widgets"`
-	Hash    string `json:"hash"`
+	Widgets int    `json:"widgets,omitempty"`
+	Hash    string `json:"hash,omitempty"`
 	Error   string `json:"error,omitempty"`
 }
 
@@ -31,6 +31,27 @@ type dashboardGetResult struct {
 	Name string `json:"name"`
 	Hash string `json:"hash"`
 	resolvedDashboard
+}
+
+// narrowDashboard keeps, for a caller that does not read the whole KB, what
+// the resolver computed for it plus structural keys: the widget's id, type,
+// size and closed-list look, and its resolved entries, groups and counts.
+// Every string an author typed and every filter or grouping definition is
+// omitted (they can name a map or a value the caller cannot see): the
+// title, description, note text, filter, group_by, columns, sort and
+// date_field. A failure message is replaced, as it can quote them.
+func narrowDashboard(d resolvedDashboard) resolvedDashboard {
+	out := resolvedDashboard{Widgets: make([]resolvedWidget, 0, len(d.Widgets))}
+	for _, w := range d.Widgets {
+		n := resolvedWidget{Entries: w.Entries, Groups: w.Groups, Total: w.Total}
+		n.ID, n.Type, n.Icon, n.Accent, n.Width = w.ID, w.Type, w.Icon, w.Accent, w.Width
+		n.Source, n.Limit, n.HorizonDays, n.Show = w.Source, w.Limit, w.HorizonDays, w.Show
+		if w.Problem != "" {
+			n.Problem = "this widget cannot be drawn"
+		}
+		out.Widgets = append(out.Widgets, n)
+	}
+	return out
 }
 
 // toolDashboardList names the dashboards of the KB (dashboards/<name>.yaml).
@@ -48,8 +69,15 @@ func toolDashboardList(k *kb.KB) Tool {
 				return errorResult("dashboard_list: " + relPathErr(err, k.Root)), nil
 			}
 			out := make([]dashboardListEntry, 0, len(names))
+			whole := WholeVisible(ctx, k, false)
 			for _, n := range names {
 				e := dashboardListEntry{Name: n}
+				if !whole {
+					// Names only: a title, a count and the hash of the file
+					// are the author's text, not the caller's data.
+					out = append(out, dashboardListEntry{Name: n})
+					continue
+				}
 				data, err := k.ReadDashboard(n)
 				if err != nil {
 					e.Error = relPathErr(err, k.Root)
@@ -99,14 +127,11 @@ func toolDashboardGet(k *kb.KB, cc *conformanceCache) Tool {
 			if err != nil {
 				return errorResult("dashboard_get: " + p.Name + ": " + err.Error()), nil
 			}
-			if !WholeVisible(ctx, k, false) {
-				// A note is free text of the whole KB, not of a collection:
-				// a caller narrowed to some maps does not read it.
-				for i := range d.Widgets {
-					d.Widgets[i].Text = ""
-				}
-			}
 			res := dashboardGetResult{Name: p.Name, Hash: kb.DashboardHash(data), resolvedDashboard: resolveDashboard(ctx, k, cc, d)}
+			if !WholeVisible(ctx, k, false) {
+				res.Hash = ""
+				res.resolvedDashboard = narrowDashboard(res.resolvedDashboard)
+			}
 			return jsonResult(res), nil
 		},
 	}

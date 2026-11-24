@@ -117,21 +117,48 @@ func TestDashboardListAndGet(t *testing.T) {
 	}
 }
 
-// TestDashboardGetShowsOnlyWhatTheCallerCanRead: a caller narrowed to one map
-// gets neither the entries of the hidden one nor a note's free text.
-func TestDashboardGetShowsOnlyWhatTheCallerCanRead(t *testing.T) {
+const narrowTestDashboard = "title: Quarter plan\ndescription: for hush-team secretword\nwidgets:\n" +
+	"  - id: open\n    type: list\n    title: Visible only\n    width: 2\n    filter:\n      map: [visible]\n    group_by: field:owner\n" +
+	"  - id: memo\n    type: note\n    title: Memo title\n    text: private words\n"
+
+// TestDashboardNarrowedCallerGetsOnlyResolvedData: a caller that does not read
+// the whole KB gets structural keys and what the resolver computed for it,
+// and none of the strings an author typed or any filter definition; a whole
+// reader gets all of them.
+func TestDashboardNarrowedCallerGetsOnlyResolvedData(t *testing.T) {
 	t.Parallel()
-	s, _ := dashboardServer(t)
+	s, k := workServer(t)
+	writeDashboardFile(t, k, "plan", narrowTestDashboard)
+	hidden := []string{"Quarter plan", "hush-team", "Visible only", "secretword", "Memo title", "private words", "field:owner", `"filter"`, `"map":["visible"]`}
+
 	ctx := restrictedContext(auth.Policy{Permissions: []auth.Permission{{KB: "docs", Maps: []string{"visible"}}}})
-	res := s.callTool(ctx, "dashboard_get", json.RawMessage(`{"name":"week"}`))
+	res := s.callTool(ctx, "dashboard_get", json.RawMessage(`{"name":"plan"}`))
 	if res.IsError {
 		t.Fatal(res.Content[0].Text)
 	}
 	text := res.Content[0].Text
-	if strings.Contains(text, "hidden") || strings.Contains(text, "private") {
-		t.Fatalf("leak: %s", text)
+	for _, h := range append(hidden, "hidden/") {
+		if strings.Contains(text, h) {
+			t.Fatalf("narrowed caller sees %q: %s", h, text)
+		}
 	}
-	if !strings.Contains(text, `"total":3`) {
-		t.Fatalf("visible entries missing: %s", text)
+	for _, want := range []string{`"id":"open"`, `"width":2`, `"visible/a"`, `"id":"memo"`} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("narrowed caller lacks %s: %s", want, text)
+		}
+	}
+	list := s.callTool(ctx, "dashboard_list", json.RawMessage(`{}`)).Content[0].Text
+	if strings.Contains(list, "Quarter") || strings.Contains(list, "hash") || !strings.Contains(list, `"name":"plan"`) {
+		t.Fatalf("narrowed list: %s", list)
+	}
+
+	whole := callTool(t, s, "dashboard_get", `{"name":"plan"}`).Content[0].Text
+	for _, h := range hidden[:7] {
+		if !strings.Contains(whole, h) {
+			t.Fatalf("whole reader lacks %q: %s", h, whole)
+		}
+	}
+	if !strings.Contains(callTool(t, s, "dashboard_list", `{}`).Content[0].Text, "Quarter plan") {
+		t.Fatal("whole reader's list lacks the title")
 	}
 }
