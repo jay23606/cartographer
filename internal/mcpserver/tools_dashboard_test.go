@@ -162,3 +162,27 @@ func TestDashboardNarrowedCallerGetsOnlyResolvedData(t *testing.T) {
 		t.Fatal("whole reader's list lacks the title")
 	}
 }
+
+// TestDashboardNarrowedCallerDoesNotSeeRawInvalidWidget: a widget that failed
+// validation keeps its raw values in the tolerant read; a narrowed caller gets
+// a positional id and a fixed sentence, nothing it typed.
+func TestDashboardNarrowedCallerDoesNotSeeRawInvalidWidget(t *testing.T) {
+	t.Parallel()
+	s, k := workServer(t)
+	writeDashboardFile(t, k, "odd", "widgets:\n  - id: Not A Slug\n    type: hush-type\n    icon: hush-icon\n    accent: hush-accent\n    source: hush-source\n    show: hush-show\n  - id: fine\n    type: list\n")
+	ctx := restrictedContext(auth.Policy{Permissions: []auth.Permission{{KB: "docs", Maps: []string{"visible"}}}})
+	res := s.callTool(ctx, "dashboard_get", json.RawMessage(`{"name":"odd"}`))
+	if res.IsError {
+		t.Fatal(res.Content[0].Text)
+	}
+	text := res.Content[0].Text
+	if strings.Contains(text, "hush") || strings.Contains(text, "Not A Slug") {
+		t.Fatalf("raw invalid widget reached a narrowed caller: %s", text)
+	}
+	if !strings.Contains(text, `"id":"widget-1"`) || !strings.Contains(text, "cannot be drawn") || !strings.Contains(text, `"id":"fine"`) {
+		t.Fatalf("placeholder missing: %s", text)
+	}
+	if whole := callTool(t, s, "dashboard_get", `{"name":"odd"}`).Content[0].Text; !strings.Contains(whole, "hush-type") {
+		t.Fatalf("whole reader must see the raw widget: %s", whole)
+	}
+}

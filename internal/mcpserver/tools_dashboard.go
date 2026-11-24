@@ -39,16 +39,22 @@ type dashboardGetResult struct {
 // Every string an author typed and every filter or grouping definition is
 // omitted (they can name a map or a value the caller cannot see): the
 // title, description, note text, filter, group_by, columns, sort and
-// date_field. A failure message is replaced, as it can quote them.
+// date_field. A widget that failed validation is reduced to a positional id and a fixed sentence.
 func narrowDashboard(d resolvedDashboard) resolvedDashboard {
 	out := resolvedDashboard{Widgets: make([]resolvedWidget, 0, len(d.Widgets))}
-	for _, w := range d.Widgets {
+	for i, w := range d.Widgets {
+		if w.Problem != "" {
+			// A widget that failed validation keeps its raw values (an unknown
+			// type, an id that is no slug): none of them reaches this caller,
+			// only its position and the fixed sentence.
+			var n resolvedWidget
+			n.ID, n.Problem = fmt.Sprintf("widget-%d", i+1), "this widget cannot be drawn"
+			out.Widgets = append(out.Widgets, n)
+			continue
+		}
 		n := resolvedWidget{Entries: w.Entries, Groups: w.Groups, Total: w.Total}
 		n.ID, n.Type, n.Icon, n.Accent, n.Width = w.ID, w.Type, w.Icon, w.Accent, w.Width
 		n.Source, n.Limit, n.HorizonDays, n.Show = w.Source, w.Limit, w.HorizonDays, w.Show
-		if w.Problem != "" {
-			n.Problem = "this widget cannot be drawn"
-		}
 		out.Widgets = append(out.Widgets, n)
 	}
 	return out
