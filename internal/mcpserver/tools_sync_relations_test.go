@@ -52,6 +52,10 @@ func newRelFixture(t *testing.T, names []string, deps map[string][][2]string) *r
 			relGit(t, k, "add", kb.SettingsFile)
 			relGit(t, k, "commit", "-q", "-m", "deps")
 		}
+		// What the first sync leaves behind: the remote's default branch is
+		// known (Relations errors on a remote without one).
+		relGit(t, k, "update-ref", "refs/remotes/origin/main", "HEAD")
+		relGit(t, k, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 		f.byName[n] = k
 	}
 	m := kb.NewMounts(f.byName, names, nil)
