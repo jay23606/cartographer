@@ -60,7 +60,7 @@ func TestValidateDashboardAcceptsAndRejects(t *testing.T) {
 		{"text on a stat, blank", "widgets:\n  - id: a\n    type: stat\n    text: \" \"\n", "text belongs to a note"},
 		{"duplicate top key", "title: a\ntitle: b\n", `field "title" declared twice`},
 		{"duplicate widgets key", "widgets: []\nwidgets: []\n", `field "widgets" declared twice`},
-		{"too many columns", "widgets:\n  - id: a\n    type: list\n    columns: [a, b, c, d, e, f, g, h, i]\n", "9 columns, the cap is 8"},
+		{"too many columns", "widgets:\n  - id: a\n    type: list\n    columns: ["+strings.Repeat("a, ", 50)+"b]\n", "51 columns, the cap is 50"},
 		{"not a mapping", "- a\n- b\n", "not a mapping"},
 		{"not yaml", "a: [", "not valid YAML"},
 		{"too big", "title: " + strings.Repeat("x", MaxDashboardBytes), "the cap is"},

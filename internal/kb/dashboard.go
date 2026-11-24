@@ -329,7 +329,7 @@ func checkWidget(w DashboardWidget, seen map[string]bool) []string {
 		add("limit %d is not between 0 and %d", w.Limit, dashboardMaxLimit)
 	}
 	if len(w.Columns) > dashboardMaxColumns {
-		add("columns are at most %d values, got %d", dashboardMaxColumns, len(w.Columns))
+		add("%d columns, the cap is %d", len(w.Columns), dashboardMaxColumns)
 	}
 	for _, c := range w.Columns {
 		// A column is a value of the group-by field ("in progress", "2026"),
