@@ -649,8 +649,9 @@ func (cc *conformanceCache) computeLint(k *kb.KB, gen uint64, stamp string) ([]l
 		cc.gen, cc.stamp, cc.findings, cc.cached = gen, stamp, findings, true
 		cc.lintCalls++
 		cc.mu.Unlock()
-		// D370: one sample a day of the unfiltered totals, taken where the
-		// whole-KB lint is recomputed and cached.
+		// D370: one sample a day of the whole-KB totals, taken where the
+		// whole-KB lint is recomputed and cached; a finding that names another
+		// KB is left out (newLintSample).
 		now := time.Now()
 		if cc.clock != nil {
 			now = cc.clock()

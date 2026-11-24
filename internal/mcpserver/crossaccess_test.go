@@ -266,3 +266,35 @@ func TestCrossStateOutOfScope(t *testing.T) {
 		t.Errorf("generic hint = %s", generic)
 	}
 }
+
+// A fix for a finding the caller cannot see is never applied: it would rewrite a
+// page for a writer who cannot read the target, and the repaired count and the
+// new hash would say so.
+func TestRepairCandidatesSkipInvisibleCrossFinding(t *testing.T) {
+	t.Parallel()
+	r := newCrossRig(t)
+	checks := map[string]bool{"nonstandard_field": true}
+	written := map[string]bool{"p": true}
+	f := lint.Finding{Path: "p.md", Check: "nonstandard_field", Message: "m", Fix: &lint.Fix{Kind: "rename_field", Field: "a", To: "b"}, OtherKBs: []string{"kb-b"}}
+	callers := crossCallers()
+	if got := repairCandidates([]lint.Finding{f}, checks, written, newCallerView(callers["a-only"], r.a)); len(got) != 0 {
+		t.Errorf("a caller who cannot read kb-b got a repair candidate: %+v", got)
+	}
+	if got := repairCandidates([]lint.Finding{f}, checks, written, newCallerView(callers["reads-a-b"], r.a)); len(got["p"]) != 1 {
+		t.Errorf("a caller who reads kb-b lost the candidate: %+v", got)
+	}
+}
+
+// The review totals never count an item whose finding names a KB the caller cannot read.
+func TestDropCrossReview(t *testing.T) {
+	t.Parallel()
+	r := newCrossRig(t)
+	items := []lint.ReviewItem{{Kind: lint.ReviewLintJudgement, Concepts: []string{"p"}}, {Kind: lint.ReviewLintJudgement, Concepts: []string{"p"}, OtherKBs: []string{"kb-b"}}}
+	callers := crossCallers()
+	if got := dropCrossReview(callers["a-only"], r.a, items); len(got) != 1 {
+		t.Errorf("hidden caller sees %d items, want 1", len(got))
+	}
+	if got := dropCrossReview(callers["reads-a-b"], r.a, items); len(got) != 2 {
+		t.Errorf("reader sees %d items, want 2", len(got))
+	}
+}
