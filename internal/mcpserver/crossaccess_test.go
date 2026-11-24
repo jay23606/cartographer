@@ -283,6 +283,13 @@ func TestRepairCandidatesSkipInvisibleCrossFinding(t *testing.T) {
 	if got := repairCandidates([]lint.Finding{f}, checks, written, newCallerView(callers["reads-a-b"], r.a)); len(got["p"]) != 1 {
 		t.Errorf("a caller who reads kb-b lost the candidate: %+v", got)
 	}
+	// A finding that names no KB stays a candidate, even on a page the caller cannot see.
+	plain := f
+	plain.OtherKBs = nil
+	narrow := principal(auth.Permission{KB: "kb-a", Maps: []string{"zzz"}})
+	if got := repairCandidates([]lint.Finding{plain}, checks, written, newCallerView(narrow, r.a)); len(got["p"]) != 1 {
+		t.Errorf("a non-cross finding stopped being a repair candidate: %+v", got)
+	}
 }
 
 // The review totals never count an item whose finding names a KB the caller cannot read.

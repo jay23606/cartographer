@@ -56,6 +56,12 @@ func newCallerView(ctx requestContext, k *kb.KB) *callerView {
 	}
 }
 
+// seesCross says whether the caller may be told of f as far as the other KBs it
+// names go; a finding that names none is always true.
+func (v *callerView) seesCross(f lint.Finding) bool {
+	return v == nil || v.crossOK == nil || v.crossOK(f)
+}
+
 // sees says whether the caller may be told of f at all.
 func (v *callerView) sees(f lint.Finding) bool {
 	if v != nil && v.crossOK != nil && !v.crossOK(f) {

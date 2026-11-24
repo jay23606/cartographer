@@ -126,13 +126,14 @@ func repairWritten(k *kb.KB, written, gone []string, view *callerView) (findings
 }
 
 // repairCandidates picks, per written concept, the findings repairWritten may
-// fix. A finding the caller's view does not see is never one: a fix applied for
-// it would rewrite a page for a writer who cannot read what the finding is
-// about, and the repaired count and the new content hash would say so.
+// fix. A finding that names a KB the caller cannot read is never one: a fix
+// applied for it would rewrite a page for a writer who cannot read what the
+// finding is about, and the repaired count and the new content hash would say
+// so. Every other finding keeps the repair it always had.
 func repairCandidates(found []lint.Finding, inChecks, isWritten map[string]bool, view *callerView) map[string][]lint.Finding {
 	byConcept := map[string][]lint.Finding{} // concept -> its repairable findings
 	for _, f := range found {
-		if f.Fix == nil || f.Artifact || !inChecks[f.Check] || !unattendedFix(f) || !view.sees(f) {
+		if f.Fix == nil || f.Artifact || !inChecks[f.Check] || !unattendedFix(f) || !view.seesCross(f) {
 			continue
 		}
 		id := uiFindingConcept(f.Path)
