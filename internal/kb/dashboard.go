@@ -12,6 +12,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"unicode"
 
 	"gopkg.in/yaml.v3"
 )
@@ -29,14 +30,15 @@ const (
 	// MaxDashboardBytes is the size of one dashboard file.
 	MaxDashboardBytes = 64 << 10
 
-	dashboardTextMaxBytes  = 8000
-	dashboardTitleMaxBytes = 120
-	dashboardDescMaxBytes  = 500
-	dashboardMaxLimit      = 200
-	dashboardMaxColumns    = 8
-	dashboardMaxFilterList = 20
-	dashboardMaxFields     = 10
-	dashboardMaxHorizon    = 365
+	dashboardTextMaxBytes   = 8000
+	dashboardTitleMaxBytes  = 120
+	dashboardDescMaxBytes   = 500
+	dashboardMaxLimit       = 200
+	dashboardMaxFilterList  = 20
+	dashboardMaxFields      = 10
+	dashboardMaxHorizon     = 365
+	dashboardMaxColumns     = 50
+	dashboardColumnMaxBytes = 200
 )
 
 var (
@@ -327,11 +329,13 @@ func checkWidget(w DashboardWidget, seen map[string]bool) []string {
 		add("limit %d is not between 0 and %d", w.Limit, dashboardMaxLimit)
 	}
 	if len(w.Columns) > dashboardMaxColumns {
-		add("%d columns, the cap is %d", len(w.Columns), dashboardMaxColumns)
+		add("columns are at most %d values, got %d", dashboardMaxColumns, len(w.Columns))
 	}
 	for _, c := range w.Columns {
-		if !dashboardFieldRE.MatchString(c) {
-			add("column %q is not a field name", c)
+		// A column is a value of the group-by field ("in progress", "2026"),
+		// not a field name.
+		if c == "" || len(c) > dashboardColumnMaxBytes || strings.ContainsFunc(c, unicode.IsControl) {
+			add("column %q must be a non-empty value of at most %d bytes with no control character", c, dashboardColumnMaxBytes)
 		}
 	}
 	if w.Type != "note" && w.Text != "" {
