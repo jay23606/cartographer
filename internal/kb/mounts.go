@@ -33,15 +33,35 @@ type mounts struct {
 
 // NewMounts builds the set the server hands to every KB. byName and aliases
 // are copied; aliases maps an old name to the current one, single hop (D772).
+//
+// order and byName name the same set: an entry of order missing from byName is
+// dropped, and a name of byName missing from order is appended in sorted
+// order, so Names() lists exactly the names Lookup accepts (and MountName
+// sees every KB).
 func NewMounts(byName map[string]*KB, order []string, aliases map[string]string) Mounts {
 	m := &mounts{
 		byName:  make(map[string]*KB, len(byName)),
-		order:   append([]string(nil), order...),
+		order:   make([]string, 0, len(byName)),
 		aliases: make(map[string]string, len(aliases)),
 	}
 	for n, k := range byName {
 		m.byName[n] = k
 	}
+	seen := make(map[string]bool, len(byName))
+	for _, n := range order {
+		if _, ok := byName[n]; ok && !seen[n] {
+			seen[n] = true
+			m.order = append(m.order, n)
+		}
+	}
+	var rest []string
+	for n := range byName {
+		if !seen[n] {
+			rest = append(rest, n)
+		}
+	}
+	sort.Strings(rest)
+	m.order = append(m.order, rest...)
 	for from, to := range aliases {
 		m.aliases[from] = to
 	}

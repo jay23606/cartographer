@@ -60,7 +60,7 @@ func TestServeWiresMounts(t *testing.T) {
 		t.Fatal(err)
 	}
 	a, b := &kb.KB{Root: t.TempDir()}, &kb.KB{Root: t.TempDir()}
-	wireMounts([]*kb.KB{a, b}, []string{"kb-a", "kb-b"}, &config.Config{Data: data})
+	wireMounts([]*kb.KB{a, b}, map[string]*kb.KB{"kb-a": a, "kb-b": b}, []string{"kb-a", "kb-b"}, &config.Config{Data: data})
 	for _, k := range []*kb.KB{a, b} {
 		m := k.Mounts()
 		if m == nil {
@@ -78,7 +78,7 @@ func TestServeWiresMounts(t *testing.T) {
 	}
 	// No settings: mounts without aliases.
 	c := &kb.KB{Root: t.TempDir()}
-	wireMounts([]*kb.KB{c}, []string{"kb-c"}, nil)
+	wireMounts([]*kb.KB{c}, map[string]*kb.KB{"kb-c": c}, []string{"kb-c"}, nil)
 	if _, ok := c.Mounts().Lookup("old-b"); ok || c.MountName() != "kb-c" {
 		t.Errorf("nil config: unexpected aliases or name %q", c.MountName())
 	}

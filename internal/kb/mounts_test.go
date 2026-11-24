@@ -67,3 +67,21 @@ func TestMountName(t *testing.T) {
 		t.Errorf("a KB outside the set: MountName = %q, want empty", got)
 	}
 }
+
+func TestNewMountsOrderMatchesSet(t *testing.T) {
+	a, b := mountsFixture(t)
+	// "ghost" is in order but not mounted; "kb-b" is mounted but not in order; "kb-a" is listed twice.
+	m := NewMounts(map[string]*KB{"kb-a": a, "kb-b": b}, []string{"ghost", "kb-a", "kb-a"}, nil)
+	if got, want := m.Names(), []string{"kb-a", "kb-b"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("Names() = %v, want %v", got, want)
+	}
+	for _, n := range m.Names() {
+		if _, ok := m.Lookup(n); !ok {
+			t.Errorf("Names() lists %q but Lookup rejects it", n)
+		}
+	}
+	b.SetMounts(m)
+	if got := b.MountName(); got != "kb-b" {
+		t.Errorf("a KB missing from order is invisible: MountName = %q", got)
+	}
+}
