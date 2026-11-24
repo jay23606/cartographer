@@ -339,3 +339,15 @@ func TestDependsOnNotAListIsLeftOut(t *testing.T) {
 		t.Errorf("empty list: has=%v bad=%v", s.Has("depends_on"), bad)
 	}
 }
+
+// The declared remote can carry credentials: the finding never echoes them.
+func TestDependsOnMalformedRemoteIsRedacted(t *testing.T) {
+	t.Parallel()
+	_, bad := keysOf(t, "depends_on:\n  - {name: kb-a, remote: \"https://user:s3cret-token@git.example.com/onlyone\"}\n")
+	if len(bad) != 1 || bad[0].Key != "depends_on[0]" {
+		t.Fatalf("findings = %v", bad)
+	}
+	if strings.Contains(bad[0].String(), "s3cret-token") {
+		t.Errorf("the finding echoes the credential: %s", bad[0])
+	}
+}
