@@ -209,3 +209,46 @@ func TestKeyBelowTheBlockDoesNotDuplicateIt(t *testing.T) {
 		t.Errorf("second realign is not a no-op: %v %v\n%s", err, rep2.Lines(), again)
 	}
 }
+
+// A file with a block read as a head comment and another read as a foot comment
+// is realigned to one block: one per owner is the invariant (#2367).
+func TestTwoBlocksMergeIntoOne(t *testing.T) {
+	in := "# --- available settings ---\n# name: x\n\nextra: 1\n# --- available settings ---\n# old: 1\n\nextra2: 1\n"
+	out, _, err := shapeSchema.Realign([]byte(in), Registry{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(out), "# --- available settings"); n != 1 {
+		t.Errorf("%d dividers after realign:\n%s", n, out)
+	}
+	again, rep, err := shapeSchema.Realign(out, Registry{})
+	if err != nil || string(again) != string(out) || !rep.Empty() {
+		t.Errorf("second realign is not a no-op: %v %v\n%s", err, rep.Lines(), again)
+	}
+}
+
+// A comment line glued to the block, with no blank line, moves with it; a note
+// set apart by a blank line stays above its key.
+func TestGluedNoteMovesWithTheBlockAndSeparatedStays(t *testing.T) {
+	glued := "# glued note\n# --- available settings ---\n# name: x\nextra: 1\n"
+	out, _, err := shapeSchema.Realign([]byte(glued), Registry{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(out)
+	if i, j := strings.Index(got, "# glued note"), strings.Index(got, "# --- available settings"); i < 0 || j < 0 || i > j || strings.Index(got, "extra: 1") > i {
+		t.Errorf("the glued note did not move with the block:\n%s", got)
+	}
+	apart := "# my note\n\n# --- available settings ---\n# name: x\nextra: 1\n"
+	out, _, err = shapeSchema.Realign([]byte(apart), Registry{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got = string(out)
+	if i := strings.Index(got, "# my note"); i < 0 || i > strings.Index(got, "extra: 1") || strings.Index(got, "# --- available settings") < strings.Index(got, "extra: 1") {
+		t.Errorf("the separated note must stay above its key, the block after it:\n%s", got)
+	}
+	if again, _, _ := shapeSchema.Realign(out, Registry{}); string(again) != got {
+		t.Errorf("not idempotent:\n%s\n---\n%s", got, again)
+	}
+}

@@ -18,7 +18,9 @@ key as unset (#2367).
 **Alternatives rejected.** Teaching `homeBlocks` to read head comments as holders: it would give every holder two places
 to look and a second ordering to keep. Dropping the old block when a second one is written: it loses lines a person edited.
 
-**Consequences.** A file that carries the duplicate keeps it: the pre-pass prevents a new one but does not merge two
-blocks that are already there. Output changes once for a file that had the defect before the fix (the block is
-lifted, one realign reports it, then the file is stable). A future change to block placement has to keep the pre-pass
-before `homeBlocks`.
+**Consequences.** A file that already carries two blocks, one read as a key's head comment and one as a foot comment,
+has them merged into one by the realign: one block per owner is the invariant, so no duplicate is kept. A comment line
+glued to the divider with no blank line between belongs to the block and moves with it; a note separated from it by a
+blank line stays above its key. Output changes once for a file that had the defect before the fix (the block is lifted,
+one realign reports it, then the file is stable). A future change to block placement has to keep the pre-pass before
+`homeBlocks`.

@@ -455,12 +455,17 @@ func liftHeadBlocks(doc, m *yaml.Node) {
 }
 
 // cutBlock splits a comment at its first divider: the text before it, and the
-// block from the divider on.
+// block from the divider on. A comment line glued to the divider, with no blank
+// line between, belongs to the block and goes with it; a note set apart by a
+// blank line stays before.
 func cutBlock(c string) (before, block string) {
 	lines := strings.Split(c, "\n")
 	at := slices.IndexFunc(lines, isMarker)
 	if at < 0 {
 		return c, ""
+	}
+	for at > 0 && strings.TrimSpace(lines[at-1]) != "" {
+		at--
 	}
 	return strings.Trim(strings.Join(lines[:at], "\n"), "\n"), strings.Trim(strings.Join(lines[at:], "\n"), "\n")
 }
