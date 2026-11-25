@@ -88,6 +88,9 @@ describe("DashboardView", () => {
     screen.getByRole("button", { name: /X/ }).click();
     expect(onOpen).toHaveBeenCalledWith("p/x");
     expect(isDue("not a date")).toBe(false);
-    expect(isDue("2026-11-25", "2026-11-25")).toBe(true);
+    expect(isDue("2026-11-25", "2026-11-25")).toBe(false);
+    expect(isDue("2026-11-24", "2026-11-25")).toBe(true);
+    expect(isDue("2026-13-45", "2026-11-25")).toBe(false);
+    expect(isDue("2026-02-30", "2026-11-25")).toBe(false);
   });
 });

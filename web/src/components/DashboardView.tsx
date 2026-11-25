@@ -148,10 +148,17 @@ function today(): string {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
 }
 
-/** A `review_after` is due when its date is today or before. A value that is not a date is never due. */
+/**
+ * A `review_after` is due the day after its date, as lint reads it: today is not due, a date
+ * strictly before today is. A value that is not a real calendar date is never due.
+ */
 export function isDue(reviewAfter: string | undefined, now: string = today()): boolean {
-  const m = /^\d{4}-\d{2}-\d{2}/.exec(reviewAfter ?? "");
-  return !!m && m[0] <= now;
+  const m = /^(\d{4})-(\d{2})-(\d{2})/.exec(reviewAfter ?? "");
+  if (!m) return false;
+  const [y, mo, d] = [Number(m[1]), Number(m[2]), Number(m[3])];
+  const t = new Date(Date.UTC(y, mo - 1, d));
+  if (t.getUTCFullYear() !== y || t.getUTCMonth() !== mo - 1 || t.getUTCDate() !== d) return false;
+  return m[0] < now;
 }
 
 /**
