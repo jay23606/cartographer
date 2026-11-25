@@ -378,7 +378,20 @@ function CrossGroup({ edges, onOpenCross }: { edges: CrossEdge[]; onOpenCross?(k
               </li>
             );
           }
-          // `resolved`, or an inbound row, which the server sends only for pages the caller reads.
+          // An outbound row is a link only when `resolved`; an inbound row is
+          // sent by the server only for pages the caller reads.
+          if (e.direction === "out" && e.state !== "resolved") {
+            return (
+              <li key={key}>
+                <span className="inspector__link inspector__link--muted">
+                  <span className="inspector__link-kind" aria-hidden="true">
+                    {arrow}
+                  </span>
+                  {label}
+                </span>
+              </li>
+            );
+          }
           return (
             <li key={key}>
               <button type="button" className="inspector__link" onClick={() => onOpenCross?.(e.kb, e.id)} disabled={!onOpenCross}>

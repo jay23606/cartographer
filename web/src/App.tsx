@@ -918,15 +918,22 @@ export function App() {
   useEffect(() => {
     if (!activeKB || !snapshotKey.startsWith(`${activeKB}\u0000`)) return;
     const controller = new AbortController();
+    // The stubs of the previous KB or scope never stay on the new graph, not
+    // while the new answer is pending and not when it fails.
+    setExternal(null);
     fetchExternalEdges(activeKB, view.scope, controller.signal)
       .then((r) => setExternal(r.edges.length > 0 ? r.edges : null))
-      .catch(() => {});
+      .catch(() => {
+        if (!controller.signal.aborted) setExternal(null);
+      });
     return () => controller.abort();
   }, [activeKB, view.scope, snapshotKey]);
   const drawnSnapshot = useMemo(() => (snapshot ? withExternalEdges(snapshot, external) : snapshot), [snapshot, external]);
 
   const expandConcept = useCallback(
     (id: string) => {
+      // A stub is a page of another KB, never a concept of this one.
+      if (parseStubId(id)) return;
       const collection = snapshot?.nodes.find((node) => node.id === id)?.collection;
       navigate({ concept: id, scope: collection ?? view.scope });
     },
