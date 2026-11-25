@@ -563,7 +563,10 @@ func lineageSuffix(cfg *clientconfig.Config, provider, canonical string) string 
 // bindCommand is the `workspace bind` command that rebinds path as w is bound:
 // the own KBs only (a rebind that wrote the effective set would turn lineage
 // KBs into hand-bound ones), and the lineage options when w carries them, since
-// a rebind that does not repeat them turns them off. A derived binding has none.
+// a rebind that does not repeat them (or --worktrees) turns them off. For a
+// derived binding (effectiveWorkspaces applies lineage to it too) the command
+// creates an explicit binding that replaces the derived one on that path, so
+// --worktrees, which a derived binding cannot carry, is not printed.
 func bindCommand(provider, path string, w clientconfig.WorkspaceBinding) string {
 	cmd := "cartographer workspace bind " + provider + " " + path
 	own := w.OwnKBs()
@@ -576,6 +579,9 @@ func bindCommand(provider, path string, w clientconfig.WorkspaceBinding) string 
 		cmd += " --no-lineage"
 	case len(w.Exclude) > 0:
 		cmd += " --exclude " + strings.Join(w.Exclude, ",")
+	}
+	if w.Worktrees && !w.Derived {
+		cmd += " --worktrees"
 	}
 	return cmd
 }

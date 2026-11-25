@@ -51,7 +51,10 @@ func loadBinding(t *testing.T, home, ws string) (*clientconfig.Config, clientcon
 // AC-lineage-21
 func TestWorkspaceBindExclude(t *testing.T) {
 	home, ws := lineageHome(t)
-	withStdout(t, func() { cmdWorkspaceBind([]string{"codex", ws, "--kb", "client-kb"}) })
+	first := withStdout(t, func() { cmdWorkspaceBind([]string{"codex", ws, "--kb", "client-kb"}) })
+	if !strings.Contains(first, "(and core-kb by lineage)") && !strings.Contains(first, "lineage is computed by sync") {
+		t.Errorf("the bind line says nothing of lineage: %q", first)
+	}
 	if _, w := loadBinding(t, home, ws); !slices.Equal(w.KBs, []string{"client-kb", "core-kb"}) {
 		t.Fatalf("without the flag: KBs = %v", w.KBs)
 	}
@@ -98,7 +101,7 @@ func TestWorkspaceBindLineageUsageErrors(t *testing.T) {
 
 // AC-lineage-23
 func TestFixLinesKeepTheOptions(t *testing.T) {
-	for _, opt := range []string{"--exclude core-kb", "--no-lineage"} {
+	for _, opt := range []string{"--exclude core-kb", "--no-lineage", "--exclude core-kb --worktrees", "--no-lineage --worktrees"} {
 		home, ws := lineageHome(t)
 		args := append([]string{"codex", ws, "--kb", "client-kb"}, strings.Fields(opt)...)
 		withStdout(t, func() { cmdWorkspaceBind(args) })
@@ -133,7 +136,7 @@ func TestFixLinesKeepTheOptions(t *testing.T) {
 		fields := strings.Fields(bindCommand("codex", w.Path, w))
 		withStdout(t, func() { cmdWorkspaceBind(fields[3:]) })
 		_, got := loadBinding(t, home, ws)
-		if got.NoLineage != want.NoLineage || !slices.Equal(got.Exclude, want.Exclude) || !slices.Equal(got.OwnKBs(), want.OwnKBs()) {
+		if got.NoLineage != want.NoLineage || !slices.Equal(got.Exclude, want.Exclude) || !slices.Equal(got.OwnKBs(), want.OwnKBs()) || got.Worktrees != want.Worktrees {
 			t.Errorf("%s: round trip changed the binding: %+v -> %+v", opt, want, got)
 		}
 	}
