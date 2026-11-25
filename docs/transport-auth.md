@@ -388,7 +388,7 @@ operator, the generic wording (whoever runs the integration adds the KB to its
 `?kbs=` URL) otherwise (D1101). A finding that names another KB is shown only to
 a caller who reads that KB whole, in every surface (`lint` and its totals,
 `gate_check`, the write gate, `kb_status`, the Atlas), and a lint sample never
-counts it.
+counts it. This is the mechanism: no check emits such a finding yet (`cross-kb-links-lint` will).
 
 For HTTP requests:
 
