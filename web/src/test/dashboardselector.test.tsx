@@ -1,6 +1,7 @@
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { act } from "react";
+import { act, Profiler } from "react";
+import { Work } from "../components/Work";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { App } from "../App";
 import { json, stubApi } from "./fixtures";
@@ -60,6 +61,34 @@ describe("the dashboard selector of the Work page", () => {
     });
     await waitFor(() => expect(screen.queryByRole("combobox", { name: /Dashboard/ })).not.toBeInTheDocument());
     expect(screen.queryByRole("heading", { level: 1, name: "This week" })).not.toBeInTheDocument();
+  });
+
+  it("never shows the previous KB's dashboard names under the new KB, not even for one render", async () => {
+    const m = api();
+    const route = m.getMockImplementation()!;
+    m.mockImplementation(async (url: string) => {
+      if (url.includes("/kbs/kb-b/dashboards")) {
+        await new Promise((r) => setTimeout(r, 100));
+        return json({ dashboards: [] });
+      }
+      return route(url);
+    });
+    // The Profiler reads the DOM of every commit, before passive effects run:
+    // the first commit under kb-b is the render a reset in an effect would leak in.
+    const commits: boolean[] = [];
+    const tree = (kb: string) => (
+      <Profiler id="work" onRender={() => commits.push(document.querySelector("option[value='week']") !== null)}>
+        <Work kb={kb} dashboard={null} onDashboard={() => undefined} onOpen={() => undefined} />
+      </Profiler>
+    );
+    const { rerender } = render(tree("kb-a"));
+    await screen.findByRole("option", { name: "This week" });
+    commits.length = 0;
+    rerender(tree("kb-b"));
+    await new Promise((r) => setTimeout(r, 200));
+    expect(commits.length).toBeGreaterThan(0);
+    expect(commits[0]).toBe(false);
+    expect(commits.every((c) => !c)).toBe(true);
   });
 
   it("names dashboard_patch when a dashboard has no widget", async () => {
