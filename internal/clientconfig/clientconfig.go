@@ -1058,6 +1058,9 @@ func (c *Config) Bind(provider, kb string) error {
 			return nil
 		}
 	}
+	if containsString(binding.Exclude, kb) {
+		return fmt.Errorf("clientconfig: KB %q is in the exclude list of provider %q: rebind with the exclusion changed (client bind %s <kbs> --exclude <the others>) instead of binding it by hand", kb, provider, provider)
+	}
 	binding.KBs = append(binding.KBs, kb)
 	binding.KBsSet = true
 	c.Clients[provider] = binding
