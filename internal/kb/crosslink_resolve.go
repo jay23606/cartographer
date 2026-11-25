@@ -21,6 +21,9 @@ var crossMaxAge = 3 * time.Second
 // crossDigestBuilds counts CrossInboundDigest recomputes, for tests.
 var crossDigestBuilds atomic.Int64
 
+// CrossDigestBuilds is that counter, for tests of the packages above.
+func CrossDigestBuilds() int64 { return crossDigestBuilds.Load() }
+
 // CrossTarget is what is true of a link's target, whoever asks: it says
 // nothing about what a caller may see. Err is set when the target KB's graph
 // could not be validated: the answer is then unknown, neither Exists nor not.
@@ -48,8 +51,8 @@ func (kb *KB) viewWithin(maxAge time.Duration) (*graphView, error) {
 func (kb *KB) CrossTarget(l CrossLink) CrossTarget { return kb.CrossTargets([]CrossLink{l})[0] }
 
 // CrossTargets resolves links in order, reading each distinct target KB once.
-// A server-qualified or malformed link, no mounts, or a name that is not
-// mounted (an alias is followed) is not Mounted. This KB's own graph is never
+// A server-qualified or malformed link, no mounts, a name that is not
+// mounted (an alias is followed) or a link naming this KB itself is not Mounted. This KB's own graph is never
 // held while another's is read.
 func (kb *KB) CrossTargets(links []CrossLink) []CrossTarget {
 	out := make([]CrossTarget, len(links))
@@ -61,7 +64,9 @@ func (kb *KB) CrossTargets(links []CrossLink) []CrossTarget {
 			continue
 		}
 		target, ok := m.Lookup(l.KB)
-		if !ok {
+		if !ok || target == kb {
+			// A link naming this KB (by its name or an alias) is never an edge:
+			// lint reports it, write [[<id>]] instead.
 			continue
 		}
 		out[i].Mounted = true

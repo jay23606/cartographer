@@ -543,7 +543,7 @@ func runChecks(k *kb.KB, scope string, scopeNeighbors bool, opts Options) ([]Fin
 		}
 
 		// --- orphan ---
-		if f, ok := orphanFinding(id, relPath, isRetired(id), ledgerEntryOf(lg, id), incomingLinks, graph.Out, archiveSet, func(t okf.ConceptID) bool { _, ok := relPathOf[t]; return ok }, func(t okf.ConceptID) bool { return len(sourceCited[string(t)]) > 0 }, func() bool { return census.only(id, archiveSet) }); ok {
+		if f, ok := orphanFinding(id, relPath, isRetired(id), ledgerEntryOf(lg, id), incomingLinks, graph.Out, archiveSet, func(t okf.ConceptID) bool { _, ok := relPathOf[t]; return ok }, func(t okf.ConceptID) bool { return len(sourceCited[string(t)]) > 0 }, func() bool { return census.only(id, archiveSet) }, func() bool { return crossEdgeIn(k, id) }, func() bool { return crossEdgeOut(k, body) }); ok {
 			emit(f)
 		}
 
@@ -895,6 +895,8 @@ func linkFindings(k *kb.KB, id okf.ConceptID, relPath, linkBase, body string, ex
 		}
 	}
 
+	crossLinkFindings(k, relPath, body, emit)
+
 	// --- index_link_form (D310) ---
 	for _, f := range indexLinkForms(body, linkBase, exists) {
 		f.Path = relPath
@@ -980,6 +982,64 @@ func ledgerEntryOf(lg *kb.LinkGraph, id okf.ConceptID) bool {
 	return ok && kb.IsSourceType(lg.Facets[i].Type)
 }
 
+// crossLinkFindings is broken_cross_kb_link for one body: a malformed link, a
+// link naming this KB itself (write [[<id>]]) and a link to a page missing in a
+// mounted KB. An unmounted name, a server qualifier or a KB that cannot be read
+// is no finding: informational only, and A's lint never fails because of B.
+// The malformed and self-named findings name no other KB, so they follow the
+// page; the missing one carries OtherKBs, which hides it from a caller who
+// cannot read that KB whole (internal/mcpserver crossFindingVisible).
+func crossLinkFindings(k *kb.KB, relPath, body string, emit func(Finding)) {
+	if !strings.Contains(body, "[[kb:") {
+		return
+	}
+	links := kb.ExtractCrossLinks(body)
+	var live []kb.CrossLink
+	m, self := k.Mounts(), k.MountName()
+	for _, l := range links {
+		switch {
+		case l.Malformed:
+			emit(newFinding("broken_cross_kb_link", Finding{Path: relPath, Message: "malformed cross-KB link"}))
+		case self != "" && l.Server == "" && m != nil && m.Canonical(l.KB) == self:
+			emit(newFinding("broken_cross_kb_link", Finding{Path: relPath, Message: fmt.Sprintf("cross-KB link names this KB: write [[%s]]", l.ID)}))
+		default:
+			live = append(live, l)
+		}
+	}
+	for i, t := range k.CrossTargets(live) {
+		if !t.Mounted || t.Err != nil || t.Exists {
+			continue
+		}
+		name := m.Canonical(live[i].KB)
+		emit(newFinding("broken_cross_kb_link", Finding{
+			Path:     relPath,
+			Message:  fmt.Sprintf("broken cross-KB link to %s:%s", name, live[i].ID),
+			OtherKBs: []string{name},
+		}))
+	}
+}
+
+// crossEdgeIn reports whether a page of another mounted KB links id of k.
+func crossEdgeIn(k *kb.KB, id okf.ConceptID) bool {
+	refs, err := k.CrossIncoming(id)
+	return err == nil && len(refs) > 0
+}
+
+// crossEdgeOut reports whether body holds a resolved cross-KB link: the target
+// KB is mounted, readable by the server, not this KB, and has the page.
+func crossEdgeOut(k *kb.KB, body string) bool {
+	if k.Mounts() == nil || !strings.Contains(body, "[[kb:") {
+		return false
+	}
+	links := kb.ExtractCrossLinks(body)
+	for _, t := range k.CrossTargets(links) {
+		if t.Mounted && t.Err == nil && t.Exists {
+			return true
+		}
+	}
+	return false
+}
+
 // orphanMessage is what a page nothing links to reads: a link INTO the page is
 // the fix (an outgoing link does not count), made in the same write (#2239).
 const orphanMessage = "no incoming links: no other page links to it, and its own outgoing links do not count — add a link to it from an existing page (the map's index page or a page of the same type) in the same concept_batch"
@@ -991,7 +1051,7 @@ const orphanMessage = "no incoming links: no other page links to it, and its own
 // one of its archive or of the KB: the write that creates a first page cannot
 // link it to anything yet, and the map's index reaches it, so it is not an
 // orphan (D1099); the next page of the archive links as usual.
-func orphanFinding(id okf.ConceptID, relPath string, isRetired, ledgerEntry bool, in, out map[okf.ConceptID]map[okf.ConceptID]struct{}, archiveSet map[string]bool, present func(okf.ConceptID) bool, cited func(okf.ConceptID) bool, loneLive func() bool) (Finding, bool) {
+func orphanFinding(id okf.ConceptID, relPath string, isRetired, ledgerEntry bool, in, out map[okf.ConceptID]map[okf.ConceptID]struct{}, archiveSet map[string]bool, present func(okf.ConceptID) bool, cited func(okf.ConceptID) bool, loneLive func() bool, crossIn, crossOut func() bool) (Finding, bool) {
 	// A retired concept is not asked to be linked: link_to_retired and
 	// index_lists_retired push links away from it, so an orphan finding would
 	// contradict them (D826).
@@ -1000,7 +1060,7 @@ func orphanFinding(id okf.ConceptID, relPath string, isRetired, ledgerEntry bool
 	}
 	// A concept another cites in its frontmatter provenance (a Source in the
 	// sources journal) is reached, though no body link says so.
-	if len(in[id]) != 0 || (cited != nil && cited(id)) {
+	if len(in[id]) != 0 || (cited != nil && cited(id)) || (crossIn != nil && crossIn()) {
 		return Finding{}, false
 	}
 	if loneLive != nil && loneLive() {
@@ -1024,6 +1084,9 @@ func orphanFinding(id okf.ConceptID, relPath string, isRetired, ledgerEntry bool
 			Path:    relPath,
 			Message: orphanMessage,
 		}), true
+	case outgoing == 0 && crossOut != nil && crossOut():
+		// A resolved cross-KB link is an outgoing edge too.
+		return Finding{}, false
 	case outgoing == 0 && ledgerEntry:
 		// A Source registered in its journal is a leaf by nature: it records a
 		// source before any page cites it (D278), and the curated index entry

@@ -2,6 +2,8 @@ package mcpserver
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"sort"
 	"strings"
@@ -152,4 +154,34 @@ func crossFingerprint(ctx context.Context, k *kb.KB) string {
 	}
 	sort.Strings(read)
 	return "+x:" + strings.Join(read, ",")
+}
+
+// crossStamp is the part of the lint-cache key that other KBs move: whether
+// each page this KB links across exists there (broken_cross_kb_link), and the
+// links other KBs hold toward this one (orphan). Without cross links both are
+// empty and so is the stamp: a KB that uses none keeps its key. An unreadable
+// KB is left out (its link is no finding), except in the inbound digest, whose
+// "unknown:" value changes again when the KB recovers.
+func crossStamp(k *kb.KB) string {
+	inbound := k.CrossInboundDigest()
+	links, err := k.CrossLinks()
+	var out []string
+	if err == nil {
+		var uniq []kb.CrossLink
+		for _, ls := range links {
+			uniq = append(uniq, ls...)
+		}
+		for i, t := range k.CrossTargets(uniq) {
+			if t.Mounted && t.Err == nil {
+				out = append(out, fmt.Sprintf("%s\x00%s\x00%t", k.Mounts().Canonical(uniq[i].KB), uniq[i].ID, t.Exists))
+			}
+		}
+	}
+	if len(out) == 0 && inbound == "" {
+		return ""
+	}
+	sort.Strings(out)
+	h := sha256.New()
+	fmt.Fprintf(h, "%s\n%s", inbound, strings.Join(out, "\n"))
+	return hex.EncodeToString(h.Sum(nil))
 }

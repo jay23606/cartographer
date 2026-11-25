@@ -235,6 +235,9 @@ func RenderGuide(kbs []GuideKB, opts GuideOptions) string {
 	}
 	if !allOptOut {
 		sb.WriteString(GuideOperational(opts.ReadOnly, opts.Procedures, opts.Feedback))
+		if len(kbs) >= 2 && !opts.ReadOnly {
+			sb.WriteString(crossLinkBullet)
+		}
 	}
 	for _, k := range kbs {
 		if k.Curated == "" {
@@ -247,6 +250,10 @@ func RenderGuide(kbs []GuideKB, opts GuideOptions) string {
 	}
 	return sb.String()
 }
+
+// crossLinkBullet is the guide line on cross-KB links, rendered when the
+// connection serves two or more KBs.
+const crossLinkBullet = "- link a page of another mounted KB with `[[kb:<name>/<id>]]` (the mount name, then the id); it is a link only if that KB is readable and served on this connection, otherwise plain text; a link to this KB is written `[[<id>]]`\n"
 
 // procedureBullets renders the procedures list: a heading line, then one line
 // per procedure. Nothing when none is served (never a dangling reference).
