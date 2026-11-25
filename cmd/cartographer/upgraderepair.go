@@ -166,10 +166,12 @@ func cmdUpgradeRepair(args []string) int {
 		// The reloaded job starts the new binary by itself: give it time to
 		// serve before ensureServiceCurrent decides, so a slow start does not
 		// cost a second graceful replacement.
-		waitForVersion(st.HTTPAddr, expectedBuild)
+		// The /health reads below target st.ProbeTarget(): the health listener
+		// when TLS is on (config.TLSHealthAddr); repairProviderSync keeps the public address.
+		waitForVersion(st.ProbeTarget(), expectedBuild)
 	}
 
-	if err := ensureServiceCurrent(configPath, st.HTTPAddr, expectedBuild); err != nil {
+	if err := ensureServiceCurrent(configPath, st.ProbeTarget(), expectedBuild); err != nil {
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		return exitRepairServiceFailure
 	}
@@ -250,7 +252,8 @@ func repairStaleServiceBeforeSync(serverURL string) {
 	if !repairSameBinaryFn(st.ServiceBinPath) {
 		return
 	}
-	hs, err := repairProbeHealthFn(st.HTTPAddr, repairHealthProbeTimeout)
+	// A /health read on the health listener when TLS is on (config.TLSHealthAddr).
+	hs, err := repairProbeHealthFn(st.ProbeTarget(), repairHealthProbeTimeout)
 	if err != nil || hs.Status != "ok" || hs.Version == "" || versionAlreadyCurrent(hs, expectedBuildFor(true)) {
 		return
 	}

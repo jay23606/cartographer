@@ -454,7 +454,8 @@ func serviceBuildSkew(st service.Status) (bool, string) {
 	if !st.Installed || !st.HealthChecked || !st.Healthy || version == "" || version == "dev" {
 		return false, ""
 	}
-	hs, err := repairProbeHealthFn(st.HTTPAddr, repairHealthProbeTimeout)
+	// A /health read: st.ProbeTarget() is the health listener when TLS is on (config.TLSHealthAddr).
+	hs, err := repairProbeHealthFn(st.ProbeTarget(), repairHealthProbeTimeout)
 	if err != nil || hs.Status != "ok" || hs.Version != version || buildid.Same(hs.Build, buildid.Self()) {
 		return false, ""
 	}

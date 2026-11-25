@@ -426,7 +426,8 @@ func (m *Manager) cronRunning(configPath string) bool {
 	if m.ownPID(configPath) != 0 {
 		return true
 	}
-	addr := configHTTPAddr(configPath)
+	// A /health read: the health listener when TLS is on (config.TLSHealthAddr).
+	addr := configProbeAddr(configPath)
 	return addr != "" && listenerAt(addr) == ListenerCartographer
 }
 
