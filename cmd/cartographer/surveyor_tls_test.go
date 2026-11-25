@@ -71,3 +71,42 @@ func TestSurveyorStartsAgainstPrivateCA(t *testing.T) {
 		t.Fatalf("unreadable ca_file: want an error naming ca_file, got %v", err)
 	}
 }
+
+// A certificate the machine does not accept cannot clear by itself: the start
+// stops at once with exit code surveyorExitStart and names ca_file, never
+// waiting out the retry budget.
+func TestSurveyorStopsAtOnceOnUnacceptedCertificate(t *testing.T) {
+	t.Cleanup(func() { _ = client.SetServerCA("", "") })
+	srv := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(`{"status":"ok","version":"test","ready":true}`))
+	}))
+	defer srv.Close()
+	retry := retryPolicy{total: 5 * time.Minute, first: time.Second, max: time.Second,
+		sleep: func(context.Context, time.Duration) bool {
+			t.Error("a rejected certificate must not be retried")
+			return false
+		}}
+	p := surveyorTLSConfig(t, srv.URL, "")
+	begin := time.Now()
+	_, err := surveyorStartup(context.Background(), p, noop(), retry, &strings.Builder{})
+	if el := time.Since(begin); el > 10*time.Second {
+		t.Fatalf("start took %s, want it to stop at once", el)
+	}
+	se, ok := err.(*startError)
+	if !ok || se.code != surveyorExitStart {
+		t.Fatalf("want a start error with code %d, got %#v", surveyorExitStart, err)
+	}
+	if !strings.Contains(err.Error(), "set ca_file in the Surveyor config to the PEM of the server's CA") {
+		t.Fatalf("message does not name the fix: %v", err)
+	}
+}
+
+// The ca_file error names the Surveyor key, not the client's server.ca_file.
+func TestSurveyorCAFileErrorNamesSurveyorKey(t *testing.T) {
+	t.Cleanup(func() { _ = client.SetServerCA("", "") })
+	p := surveyorTLSConfig(t, "https://example.com", "ca_file: "+filepath.Join(t.TempDir(), "missing.pem")+"\n")
+	_, err := surveyorStartup(context.Background(), p, noop(), fastRetry(20*time.Millisecond), &strings.Builder{})
+	if err == nil || !strings.Contains(err.Error(), "(ca_file in the Surveyor config)") || strings.Contains(err.Error(), "server.ca_file") {
+		t.Fatalf("want the Surveyor key named, got %v", err)
+	}
+}
