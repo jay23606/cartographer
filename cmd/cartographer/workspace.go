@@ -85,6 +85,16 @@ type syncProjection struct {
 	HookSettingsRel string
 }
 
+// ownKBs is the KB list a printed `workspace bind` command names: OwnKBs when
+// the projection was built with lineage, else its own KBs (nil OwnKBs means no
+// lineage KBs).
+func (p syncProjection) ownKBs() []string {
+	if p.OwnKBs != nil {
+		return p.OwnKBs
+	}
+	return p.KBs
+}
+
 // Key is the lockfile projection this state is recorded under.
 func (p syncProjection) Key() provisioning.Projection {
 	return provisioning.Projection{Provider: p.Provider, Workspace: p.Workspace}
