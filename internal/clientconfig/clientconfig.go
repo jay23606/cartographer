@@ -172,6 +172,9 @@ type Config struct {
 	// AllowInsecureHTTP is the persisted opt-in to a non-loopback http://
 	// server_url (D1023). Use InsecureHTTPAllowed, which also honours the env var.
 	AllowInsecureHTTP bool `yaml:"-"`
+	// CAFilePath is server.ca_file as written; use CAFile, which expands it and
+	// honours CARTOGRAPHER_CA_FILE.
+	CAFilePath string `yaml:"-"`
 	// loadDefaulted holds the schema default Load applied to a key the file does
 	// not carry (server_url, server_name, token). Save leaves such a key out
 	// while its value is still that default: a default is a load-time value, and
@@ -325,6 +328,7 @@ type serverGroup struct {
 	Auth              bool   `yaml:"auth"`
 	Token             string `yaml:"token"`
 	AllowInsecureHTTP bool   `yaml:"allow_insecure_http,omitempty"`
+	CAFile            string `yaml:"ca_file,omitempty"`
 }
 
 // placeholderGroup is the placeholders: group: how {{repo:}} and {{path:}} resolve.
@@ -602,6 +606,7 @@ func Load(dir string) (*Config, error) {
 		Workspaces:        flat.Workspaces,
 		Plugins:           y.Plugins,
 		AllowInsecureHTTP: y.Server.AllowInsecureHTTP,
+		CAFilePath:        y.Server.CAFile,
 		UsageScan:         true, // absent `usage_scan` key defaults to true
 
 		SearchRoots:  y.Placeholders.SearchRoots,
@@ -709,7 +714,42 @@ func Load(dir string) (*Config, error) {
 		return nil, err
 	}
 	cfg.derived = LoadDerived(dir)
+	if OnLoad != nil {
+		if err := OnLoad(&cfg); err != nil {
+			return nil, fmt.Errorf("clientconfig: %s: %w", Path(dir), err)
+		}
+	}
 	return &cfg, nil
+}
+
+// OnLoad is called with every config Load returns; cmd/cartographer sets it once
+// to register server.ca_file with internal/client (which this package must not
+// be imported by), so no caller of Load changes. An error fails the Load.
+var OnLoad func(*Config) error
+
+// CAFileEnv is the environment variable that sets the CA file for one run.
+const CAFileEnv = "CARTOGRAPHER_CA_FILE"
+
+// CAFile returns the PEM file of the private CA that signed the server's
+// certificate: CARTOGRAPHER_CA_FILE, else server.ca_file, with ~ and $HOME
+// expanded. Empty means the system roots only. A relative path is an error
+// naming the key.
+func (c *Config) CAFile() (string, error) {
+	key, p := "server.ca_file", ""
+	if c != nil {
+		p = c.CAFilePath
+	}
+	if v := strings.TrimSpace(os.Getenv(CAFileEnv)); v != "" {
+		key, p = CAFileEnv, v
+	}
+	if p == "" {
+		return "", nil
+	}
+	p = ExpandSymlinkPath(homeOrEmpty(), p)
+	if !filepath.IsAbs(p) {
+		return "", fmt.Errorf("%s %q must be an absolute path (~ and $HOME are expanded)", key, p)
+	}
+	return p, nil
 }
 
 // documentMapping is the top-level mapping of a parsed document, nil when the
@@ -770,7 +810,7 @@ func SaveWouldRewrite(dir string, cfg *Config) (bool, error) {
 // yamlDocument is the document Save writes for cfg over what dir holds now.
 func yamlDocument(dir string, cfg *Config) (*yaml.Node, error) {
 	y := yamlConfig{
-		Server:       serverGroup{URL: cfg.ServerURL, Name: cfg.ServerName, Auth: cfg.Auth, Token: cfg.Token, AllowInsecureHTTP: cfg.AllowInsecureHTTP},
+		Server:       serverGroup{URL: cfg.ServerURL, Name: cfg.ServerName, Auth: cfg.Auth, Token: cfg.Token, AllowInsecureHTTP: cfg.AllowInsecureHTTP, CAFile: cfg.CAFilePath},
 		Placeholders: placeholderGroup{Paths: cfg.Paths, Ignored: cfg.IgnoredPaths},
 		Plugins:      cfg.Plugins,
 

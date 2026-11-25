@@ -2,6 +2,7 @@ package clientconfig_test
 
 import (
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -279,5 +280,33 @@ func TestMigrationWritesSchemaOrderAndReorderFileRewritesAnExistingFile(t *testi
 	}
 	if _, err := clientconfig.Load(other); err != nil {
 		t.Errorf("the reordered file does not load: %v", err)
+	}
+}
+
+// AC-tls-native-15: server.ca_file round-trips through Save and Load, and the
+// environment wins over it for one run.
+func TestCAFileRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	want := filepath.Join(dir, "ca.pem")
+	cfg := clientconfig.Default()
+	cfg.CAFilePath = want
+	if err := clientconfig.Save(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	got, err := clientconfig.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p, err := got.CAFile(); err != nil || p != want {
+		t.Fatalf("CAFile() = %q, %v; want %q", p, err, want)
+	}
+	t.Setenv(clientconfig.CAFileEnv, filepath.Join(dir, "env.pem"))
+	if p, _ := got.CAFile(); p != filepath.Join(dir, "env.pem") {
+		t.Errorf("the environment must win, got %q", p)
+	}
+	t.Setenv(clientconfig.CAFileEnv, "")
+	got.CAFilePath = "relative/ca.pem"
+	if _, err := got.CAFile(); err == nil || !strings.Contains(err.Error(), "server.ca_file") {
+		t.Errorf("a relative path must be an error naming the key, got %v", err)
 	}
 }

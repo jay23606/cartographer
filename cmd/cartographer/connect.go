@@ -255,6 +255,7 @@ var connectFormFlagNames = map[string]bool{
 	"server-url":          true,
 	"auth":                true,
 	"allow-insecure-http": true,
+	"ca-file":             true,
 	"token-env":           true,
 	"agents":              true,
 }
@@ -378,6 +379,7 @@ func cmdConnect(args []string) int {
 	var kbSel repeatedString
 	fs.Var(&kbSel, "kb", "KB this client may receive (repeatable, or comma-separated; 'all' for every mounted KB)")
 	allowInsecure := fs.Bool("allow-insecure-http", false, "Accept a plain http:// server URL that is not loopback (the bearer token then travels in clear)")
+	caFile := fs.String("ca-file", "", "PEM file of the private CA that signed the https:// server certificate (persisted as server.ca_file; trusted for the server host only)")
 	accessFlag := fs.String("access", "", "Connection profile: read-min (read-only, minimal tool list; routed server only). Empty keeps the persisted value; clear it by removing providers.<provider>.access and providers.<provider>.tools")
 	workspaceFlag := fs.String("workspace", "", "Project the selected KBs into this repository instead of the global catalogue (D193)")
 	var pluginSrcs repeatedString
@@ -442,6 +444,7 @@ func cmdConnect(args []string) int {
 		DryRun:    *dryRun,
 		// The key survives a re-run without the flag; the flag only adds it.
 		AllowInsecureHTTP: *allowInsecure || (existing != nil && existing.AllowInsecureHTTP),
+		CAFile:            connectCAFile(*caFile, existing),
 		PinKeys:           pinKeys,
 		UnpinKeys:         unpinKeys,
 		KBs:               splitCommaList(kbSel),
@@ -953,6 +956,8 @@ type connectOptions struct {
 	// AllowInsecureHTTP is the persisted opt-in to a non-loopback http://
 	// server URL (D1023); the env var also allows a run (insecureHTTPAllowed).
 	AllowInsecureHTTP bool
+	// CAFile is server.ca_file, from --ca-file or the existing config.
+	CAFile string
 	// KBs is the operator's explicit KB selection for this connect (D190),
 	// from --kb or the form. Empty means "not chosen": with two or more KBs
 	// mounted and no existing binding that is an error, not a silent
@@ -1017,6 +1022,30 @@ func (o connectOptions) errw() io.Writer {
 	return o.Out
 }
 
+// connectCAFile is the CA file this connect persists: the flag, else the one
+// already in the file (a re-run without the flag keeps it, as for the opt-in).
+func connectCAFile(flagValue string, existing *clientconfig.Config) string {
+	if flagValue != "" {
+		return flagValue
+	}
+	if existing != nil {
+		return existing.CAFilePath
+	}
+	return ""
+}
+
+func init() { clientconfig.OnLoad = registerServerCA }
+
+// registerServerCA is clientconfig.OnLoad: it hands the CA file to the client
+// package, so every command that loads the config trusts it for the server.
+func registerServerCA(cfg *clientconfig.Config) error {
+	p, err := cfg.CAFile()
+	if err != nil {
+		return err
+	}
+	return client.SetServerCA(p, cfg.ServerURL)
+}
+
 // insecureHTTPAllowed reports whether this connect may reach a non-loopback
 // http:// URL: the opt-in, or CARTOGRAPHER_ALLOW_INSECURE_HTTP.
 func (o connectOptions) insecureHTTPAllowed() bool {
@@ -1054,6 +1083,10 @@ func doConnect(opts connectOptions) (connectResult, error) {
 func doConnectLocked(opts connectOptions) (connectResult, error) {
 	if len(opts.Providers) == 0 {
 		return connectResult{}, fmt.Errorf("no providers to connect")
+	}
+	// --ca-file is not in the config Load registered yet: trust it for the probes below.
+	if err := registerServerCA(&clientconfig.Config{ServerURL: opts.ServerURL, CAFilePath: opts.CAFile}); err != nil {
+		return connectResult{}, err
 	}
 	// The pre-#329 default is migrated when passed explicitly too: it reaches
 	// here from old scripts and docs, and on Windows it points at ::1, where
@@ -1221,7 +1254,7 @@ func doConnectLocked(opts connectOptions) (connectResult, error) {
 	}
 	// Clients travels with it: connecting a provider must not pull or
 	// materialize a KB it is not bound to (D170).
-	pullCfg := &clientconfig.Config{ServerURL: opts.ServerURL, ServerName: opts.Name, Auth: opts.Auth, Token: opts.Token, AllowInsecureHTTP: opts.AllowInsecureHTTP, KnownKBs: pullKBs, Clients: existing.Clients, SigningKeys: existing.SigningKeys}
+	pullCfg := &clientconfig.Config{ServerURL: opts.ServerURL, ServerName: opts.Name, Auth: opts.Auth, Token: opts.Token, AllowInsecureHTTP: opts.AllowInsecureHTTP, CAFilePath: opts.CAFile, KnownKBs: pullKBs, Clients: existing.Clients, SigningKeys: existing.SigningKeys}
 	projections, projErr := allProjections(pullCfg, opts.Providers, opts.Dir)
 	if projErr != nil {
 		return connectResult{}, projErr
@@ -1249,6 +1282,7 @@ func doConnectLocked(opts connectOptions) (connectResult, error) {
 		// Set on purpose, even when equal to the default Load applied.
 		existing.Assigned("server.url", "server.name", "server.token")
 		existing.AllowInsecureHTTP = opts.AllowInsecureHTTP
+		existing.CAFilePath = opts.CAFile
 		// The early save keeps the previous list: the refusals below read it to
 		// know which KBs still have a stale entry of ours.
 		if healthErr == nil && !early {

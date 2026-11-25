@@ -5,6 +5,7 @@ import (
 	"crypto/ed25519"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"flag"
 	"fmt"
@@ -752,5 +753,42 @@ func TestConnectOffersInstall_DeniedProbeNeverOffers(t *testing.T) {
 	}
 	if connectOffersInstall(service.Status{HealthSkipReason: service.HealthSkipDenied}) {
 		t.Error("a denied probe was offered an install")
+	}
+}
+
+// AC-tls-native-15: --ca-file is persisted by connect, a re-run without the
+// flag keeps it, the flag beats the file, and reconnect keeps the key.
+func TestConnectCAFilePrecedenceAndReconnect(t *testing.T) {
+	srv := multiKBServer(t, `{"status":"ok","version":"1.4.0","kbs":[{"name":"alpha"}]}`)
+	defer srv.Close()
+	t.Cleanup(func() { _ = client.SetServerCA("", "") })
+	tls := httptest.NewTLSServer(http.NotFoundHandler())
+	defer tls.Close()
+	caFile := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(caFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tls.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	if _, err := doConnect(connectOptions{
+		Providers: []string{"claude"}, Dir: dir, ServerURL: srv.URL + "/mcp",
+		Name: "cartographer", Token: "${TOKEN}", CAFile: connectCAFile(caFile, nil),
+	}); err != nil {
+		t.Fatalf("doConnect: %v", err)
+	}
+	cfg, err := clientconfig.Load(dir)
+	if err != nil || cfg.CAFilePath != caFile {
+		t.Fatalf("connect --ca-file must persist server.ca_file: %q, %v", cfg.CAFilePath, err)
+	}
+	if got := connectCAFile("", cfg); got != caFile {
+		t.Errorf("a re-run without the flag must keep the key, got %q", got)
+	}
+	if got := connectCAFile("/other.pem", cfg); got != "/other.pem" {
+		t.Errorf("the flag must beat the file, got %q", got)
+	}
+	if _, err := doReconnect(reconnectOptions{Target: "all", Dir: dir}); err != nil {
+		t.Fatalf("doReconnect: %v", err)
+	}
+	if cfg, err = clientconfig.Load(dir); err != nil || cfg.CAFilePath != caFile {
+		t.Errorf("reconnect must keep server.ca_file: %q, %v", cfg.CAFilePath, err)
 	}
 }

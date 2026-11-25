@@ -1,8 +1,11 @@
 package client
 
 import (
+	"encoding/pem"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -139,5 +142,52 @@ func TestWithHTTPTimeoutCopiesTheClient(t *testing.T) {
 	}
 	if short.Token != "tok" || short.ServerURL != c.ServerURL {
 		t.Error("the copy lost the client's settings")
+	}
+}
+
+// writeServerCA writes the certificate of a test TLS server as a PEM file.
+func writeServerCA(t *testing.T, srv *httptest.Server) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "ca.pem")
+	data := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: srv.Certificate().Raw})
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return path
+}
+
+// AC-tls-native-14: the CA file is trusted for the server host only.
+func TestServerCAScopedToTheServerHost(t *testing.T) {
+	ok := func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) }
+	srv := httptest.NewTLSServer(http.HandlerFunc(ok))
+	defer srv.Close()
+	other := httptest.NewTLSServer(http.HandlerFunc(ok))
+	defer other.Close()
+	t.Cleanup(func() { _ = SetServerCA("", "") })
+	hc := HTTPClient(&http.Client{}, false)
+
+	if _, err := hc.Get(srv.URL); err == nil || !strings.Contains(err.Error(), "x509") {
+		t.Fatalf("without the file the request must fail verification, got %v", err)
+	}
+	if err := SetServerCA(writeServerCA(t, srv), srv.URL+"/mcp"); err != nil {
+		t.Fatal(err)
+	}
+	resp, err := hc.Get(srv.URL)
+	if err != nil {
+		t.Fatalf("with the file the request must succeed: %v", err)
+	}
+	resp.Body.Close()
+	if _, err := hc.Get(other.URL); err == nil || !strings.Contains(err.Error(), "x509") {
+		t.Fatalf("another host must not trust the file, got %v", err)
+	}
+	if err := SetServerCA(filepath.Join(t.TempDir(), "missing.pem"), srv.URL); err == nil || !strings.Contains(err.Error(), "ca_file") {
+		t.Fatalf("an unreadable file must be an error naming the key, got %v", err)
+	}
+	bad := filepath.Join(t.TempDir(), "bad.pem")
+	if err := os.WriteFile(bad, []byte("not a certificate"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := SetServerCA(bad, srv.URL); err == nil || !strings.Contains(err.Error(), "ca_file") {
+		t.Fatalf("a file with no certificate must be an error naming the key, got %v", err)
 	}
 }
