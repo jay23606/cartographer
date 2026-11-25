@@ -105,12 +105,15 @@ func deriveWorkspaceBindings(cfg *clientconfig.Config, targets []string, dir str
 	if notes.Predates {
 		fmt.Fprintln(errw, "server predates KB relations: lineage left as it was")
 	}
+	// The stored state before this run: what a failed pull puts back, read
+	// before SetDerived replaces it.
+	stored := cfg.Derived()
 	cfg.SetDerived(next)
 
 	// Lineage KBs are pulled once, here, for the manifest build to reuse. A
 	// failed one skips its holders (its failure is in pre) while the stored
 	// entry of its seeds is put back: stored state never names a KB nothing
-	// could apply.
+	// could apply, whether the failed pull was this one or a candidate's.
 	if extra := lineageKBsToPull(cfg, targets, pre); len(extra) > 0 {
 		cs, failed, err := fetchCandidatesPartial(cfg, extra)
 		if err != nil {
@@ -120,7 +123,9 @@ func deriveWorkspaceBindings(cfg *clientconfig.Config, targets []string, dir str
 		for _, kb := range extra {
 			pre.kbs[kb] = true
 		}
-		next.Lineage = restoredLineage(cfg.Derived(), next.Lineage, failed, errw)
+	}
+	if pre != nil {
+		next.Lineage = restoredLineage(stored, next.Lineage, pre.failed, errw)
 	}
 	widened := diffSnapshots(before, bindingSnapshot(cfg, targets), pre)
 	if len(widened.Added)+len(widened.Removed) > 0 {
