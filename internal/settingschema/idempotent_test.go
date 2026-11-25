@@ -55,6 +55,12 @@ var shapeInputs = []string{
 	"auth:\n  tokens:\n    - a\n# my note\n",
 	"name: a\nauth:\n  mode: x\n  # a\n# b\n",
 	"git:\n  hooks:\n    pre: a\n    custom:\n      - one\n# my note\n",
+	// A key written below an available-settings block: the parser reads the
+	// block as the key's head comment (#2367). Root level, then nested.
+	"# --- available settings: uncomment a key to set it ---\n\n# The name.\n# name: demo\nextra: 1\n",
+	"name: a\n# a note\n\n# --- available settings: uncomment a key to set it ---\n\n# The roles.\n# auth:\n#   roles: []\nextra: 1\n",
+	"auth:\n  tokens:\n    - a\n  # --- available settings: uncomment a key to set it ---\n\n  # The mode.\n  # mode: auto\n  extra: 1\n",
+	"git:\n  sync: false\n  # --- available settings: uncomment a key to set it ---\n\n  # Pre hook.\n  # hooks:\n  #   pre: x\n  extra: 1\n",
 }
 
 // A file the schema has rendered is a fixed point: rendering it again changes
@@ -173,5 +179,33 @@ func TestRealignFileOfANoteAfterAMappingWritesOneBackup(t *testing.T) {
 	}
 	if got, _ := os.ReadFile(path); !strings.Contains(string(got), "# my note") {
 		t.Errorf("the note was lost:\n%s", got)
+	}
+}
+
+// A key written below the generated block does not make a second block: the
+// parser reads the old one as the key's head comment, and a realign lifts it
+// back to where the block is read (#2367).
+func TestKeyBelowTheBlockDoesNotDuplicateIt(t *testing.T) {
+	first, err := shapeSchema.Format(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	in := string(first) + "\nname: acme\n"
+	out, rep, err := shapeSchema.Realign([]byte(in), Registry{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := strings.Count(string(out), "# --- available settings"); n != 1 {
+		t.Errorf("%d blocks after realign:\n%s", n, out)
+	}
+	if rep.Empty() {
+		t.Errorf("the realign changed the file and reported nothing:\n%s", out)
+	}
+	if !strings.Contains(string(out), "\nname: acme") || strings.Contains(string(out), "# name:") {
+		t.Errorf("the key written by hand must be set, not listed as unset:\n%s", out)
+	}
+	again, rep2, err := shapeSchema.Realign(out, Registry{})
+	if err != nil || string(again) != string(out) || !rep2.Empty() {
+		t.Errorf("second realign is not a no-op: %v %v\n%s", err, rep2.Lines(), again)
 	}
 }
