@@ -86,6 +86,9 @@ var serverCA struct {
 type serverTrust struct {
 	pool *x509.CertPool
 	rt   http.RoundTripper
+	// owner is the config file that registered the entry (SetServerCAFrom),
+	// "" when the caller did not say.
+	owner string
 }
 
 // CAFileError is a CA file that cannot be used: unreadable, or holding no PEM
@@ -131,6 +134,29 @@ func canonicalHost(u *url.URL) string {
 // that cannot be read or holds no certificate is a *CAFileError, never a
 // silent fallback.
 func SetServerCA(path, serverURL string) error {
+	return SetServerCAFrom("", path, serverURL)
+}
+
+// ReleaseServerCA removes the entry of serverURL's host only when owner
+// registered it (SetServerCAFrom): the config that registered a CA file is the
+// one whose removal of the key withdraws it, another directory's config without
+// one leaves it alone.
+func ReleaseServerCA(owner, serverURL string) {
+	u, err := url.Parse(serverURL)
+	if err != nil || u.Host == "" {
+		return
+	}
+	serverCA.Lock()
+	defer serverCA.Unlock()
+	h := canonicalHost(u)
+	if tr, ok := serverCA.byHost[h]; ok && tr.owner == owner {
+		delete(serverCA.byHost, h)
+	}
+}
+
+// SetServerCAFrom is SetServerCA recording owner, the config file that asked,
+// for ReleaseServerCA.
+func SetServerCAFrom(owner, path, serverURL string) error {
 	serverCA.Lock()
 	defer serverCA.Unlock()
 	if path == "" {
@@ -162,7 +188,7 @@ func SetServerCA(path, serverURL string) error {
 	if serverCA.byHost == nil {
 		serverCA.byHost = map[string]serverTrust{}
 	}
-	serverCA.byHost[canonicalHost(u)] = serverTrust{pool: pool, rt: t}
+	serverCA.byHost[canonicalHost(u)] = serverTrust{pool: pool, rt: t, owner: owner}
 	return nil
 }
 

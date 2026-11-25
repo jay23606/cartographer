@@ -896,3 +896,96 @@ func TestUnknownAuthorityHint(t *testing.T) {
 		t.Errorf("the hint belongs to certificate failures only: %q", got)
 	}
 }
+
+// caLoadFixture sets OnLoad to registerServerCA and returns a TLS server, a
+// writer of a CA file for the server's certificate, and a config saver.
+func caLoadFixture(t *testing.T) (srv *httptest.Server, caFor func(*httptest.Server) string, save func(dir, ca string)) {
+	t.Helper()
+	old := clientconfig.OnLoad
+	t.Cleanup(func() { clientconfig.OnLoad = old; _ = client.SetServerCA("", "") })
+	clientconfig.OnLoad = registerServerCA
+	srv = httptest.NewTLSServer(http.NotFoundHandler())
+	t.Cleanup(srv.Close)
+	caFor = func(s *httptest.Server) string {
+		p := filepath.Join(t.TempDir(), "ca.pem")
+		if err := os.WriteFile(p, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: s.Certificate().Raw}), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+	save = func(dir, ca string) {
+		cfg := clientconfig.Default()
+		cfg.ServerURL, cfg.CAFilePath = srv.URL+"/mcp", ca
+		if err := clientconfig.Save(dir, cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return srv, caFor, save
+}
+
+func reaches(srv *httptest.Server) bool {
+	resp, err := client.HTTPClient(&http.Client{}, false).Get(srv.URL)
+	if err != nil {
+		return false
+	}
+	resp.Body.Close()
+	return true
+}
+
+// Removing server.ca_file from the config that registered the CA, in a process
+// that stays up, withdraws it on the next load.
+func TestLoadAfterCAFileRemovedDropsTheCA(t *testing.T) {
+	srv, caFor, save := caLoadFixture(t)
+	dir := t.TempDir()
+	save(dir, caFor(srv))
+	if _, err := clientconfig.Load(dir); err != nil || !reaches(srv) {
+		t.Fatalf("the CA must be trusted after the first load: %v", err)
+	}
+	save(dir, "")
+	if _, err := clientconfig.Load(dir); err != nil {
+		t.Fatal(err)
+	}
+	if reaches(srv) {
+		t.Fatal("the removed CA file is still trusted")
+	}
+}
+
+// A config of another directory without ca_file does not drop the CA the main
+// config registered, even for the same server.
+func TestLoadOfAnotherConfigWithoutCAFileKeepsTheCA(t *testing.T) {
+	srv, caFor, save := caLoadFixture(t)
+	main, ws := t.TempDir(), t.TempDir()
+	save(main, caFor(srv))
+	save(ws, "")
+	for _, d := range []string{main, ws, ws} {
+		if _, err := clientconfig.Load(d); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if !reaches(srv) {
+		t.Fatal("another directory's config cleared the main CA")
+	}
+}
+
+// A new ca_file path in the same config replaces the pool (httptest servers
+// share one certificate, so the pool itself is compared).
+func TestLoadWithAChangedCAFileReplacesThePool(t *testing.T) {
+	srv, caFor, save := caLoadFixture(t)
+	dir := t.TempDir()
+	host := strings.TrimPrefix(srv.URL, "https://")
+	save(dir, caFor(srv))
+	if _, err := clientconfig.Load(dir); err != nil {
+		t.Fatal(err)
+	}
+	first := client.ServerRoots(host)
+	if first == nil {
+		t.Fatal("no pool after the first load")
+	}
+	save(dir, caFor(srv))
+	if _, err := clientconfig.Load(dir); err != nil {
+		t.Fatal(err)
+	}
+	if second := client.ServerRoots(host); second == nil || second == first {
+		t.Fatal("the pool was not replaced by the new ca_file")
+	}
+}

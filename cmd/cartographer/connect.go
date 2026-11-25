@@ -1084,11 +1084,14 @@ func registerServerCA(cfg *clientconfig.Config) error {
 		return err
 	}
 	if p == "" {
-		// A config without a CA file (a workspace's, another server's) must not
-		// clear what the main config registered: the registry is per host.
+		// Only the config that registered the host's CA withdraws it; another
+		// directory's config without a CA file (a workspace's) leaves it be.
+		if src := cfg.SourcePath(); src != "" {
+			client.ReleaseServerCA(src, cfg.ServerURL)
+		}
 		return nil
 	}
-	err = client.SetServerCA(p, cfg.ServerURL)
+	err = client.SetServerCAFrom(cfg.SourcePath(), p, cfg.ServerURL)
 	var cae *client.CAFileError
 	if errors.As(err, &cae) {
 		cae.Source = cfg.CAFileSource()

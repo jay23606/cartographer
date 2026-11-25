@@ -104,6 +104,11 @@ type Config struct {
 	// to it. Read it through WorkspaceBindings/ResolveWorkspace.
 	derived DerivedState
 
+	// source is the config file Load read this Config from; empty for a Config
+	// built in memory. OnLoad hooks use it to tell the configs of several
+	// directories apart.
+	source string
+
 	// SearchRoots is where repoindex.Scan looks for local git clones to
 	// resolve `{{repo:<key>}}` placeholders (D75 WP1/WP3). "~" is expanded by
 	// the consumer (repoindex.expandHome), not here. Defaults to
@@ -714,6 +719,7 @@ func Load(dir string) (*Config, error) {
 		return nil, err
 	}
 	cfg.derived = LoadDerived(dir)
+	cfg.source = Path(dir)
 	if OnLoad != nil {
 		if err := OnLoad(&cfg); err != nil {
 			return nil, fmt.Errorf("clientconfig: %s: %w", Path(dir), err)
@@ -721,6 +727,10 @@ func Load(dir string) (*Config, error) {
 	}
 	return &cfg, nil
 }
+
+// SourcePath is the config file Load read c from, or "" for a Config not
+// loaded from a file.
+func (c *Config) SourcePath() string { return c.source }
 
 // OnLoad is called with every config Load returns; cmd/cartographer sets it once
 // to register server.ca_file with internal/client (which this package must not
