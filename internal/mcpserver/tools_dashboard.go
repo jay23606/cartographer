@@ -164,7 +164,7 @@ const dashboardOpsDoc = "ops is a JSON array applied in order, all or nothing: "
 
 // dashboardSecretFindings names every credential-shaped string in an author
 // string of the dashboard (title, description, widget titles, note text,
-// filter text and field values), by place and kind, never quoting the value.
+// link ids, filter text and field values), by place and kind, never quoting the value.
 func dashboardSecretFindings(d kb.Dashboard) []string {
 	var out []string
 	scan := func(place, text string) {
@@ -177,6 +177,9 @@ func dashboardSecretFindings(d kb.Dashboard) []string {
 	for _, w := range d.Widgets {
 		scan(fmt.Sprintf("widget %q title", w.ID), w.Title)
 		scan(fmt.Sprintf("widget %q text", w.ID), w.Text)
+		for i, id := range w.IDs {
+			scan(fmt.Sprintf("widget %q link id %d", w.ID, i+1), id)
+		}
 		if w.Filter != nil {
 			scan(fmt.Sprintf("widget %q filter text", w.ID), w.Filter.Text)
 			keys := make([]string, 0, len(w.Filter.Fields))

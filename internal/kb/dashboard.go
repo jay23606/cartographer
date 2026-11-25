@@ -15,6 +15,8 @@ import (
 	"unicode"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/BeppeTemp/cartographer/internal/okf"
 )
 
 // DashboardsDir is the KB-root folder of the dashboards: one file
@@ -387,6 +389,8 @@ func checkWidget(w DashboardWidget, seen map[string]bool) []string {
 				add("link id %q must be a non-empty concept id of at most 200 bytes with no control character", id)
 			case strings.HasPrefix(id, "kb:"):
 				add("link id %q names another KB: a links widget takes ids of this KB only", id)
+			case okf.ValidateID(id) != nil:
+				add("link id %q is not a canonical concept id (relative, slash-separated, no empty, . or .. segment, no backslash)", id)
 			}
 		}
 		if w.Filter != nil || w.GroupBy != "" || len(w.Columns) > 0 || w.Sort != "" || w.Limit != 0 || w.Source != "" {
