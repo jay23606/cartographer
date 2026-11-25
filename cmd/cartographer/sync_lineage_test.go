@@ -35,6 +35,8 @@ type lineageServer struct {
 	instructions bool
 	// hookKB: the KB whose pull also carries a hook.
 	hookKB string
+	// agents: every KB's pull also carries an agent named agent-<kb>.
+	agents bool
 	// skillName: every KB's pull serves its skill under this name, so two KBs collide.
 	skillName string
 }
@@ -84,6 +86,13 @@ func newLineageServer(t *testing.T, mounted ...string) *lineageServer {
 				m["artifacts"] = append(arts, map[string]any{"kind": "instructions", "name": kb, "source": "kb:" + kb,
 					"content_hash": provisioning.ContentHashFiles(files),
 					"files":        []map[string]any{{"path": "instructions.md", "content_b64": base64.StdEncoding.EncodeToString(body)}}})
+			}
+			if s.agents {
+				files := []contract.ArtifactFile{{Path: "agent.md", Content: []byte("---\nname: agent-" + kb + "\ndescription: d\n---\nbody\n")}}
+				arts, _ := m["artifacts"].([]any)
+				m["artifacts"] = append(arts, map[string]any{"kind": "agent", "name": "agent-" + kb, "source": "kb:" + kb,
+					"content_hash": provisioning.ContentHashFiles(files),
+					"files":        []map[string]any{{"path": "agent.md", "content_b64": base64.StdEncoding.EncodeToString(files[0].Content)}}})
 			}
 			if kb != "" && kb == s.hookKB {
 				files := []contract.ArtifactFile{
@@ -866,6 +875,41 @@ func TestLineageCollisionMessage(t *testing.T) {
 			if !strings.Contains(all, want) {
 				t.Errorf("%s: output misses %q:\n%s", scope, want, all)
 			}
+		}
+	}
+}
+
+// The environment lines of a block written into a tracked file leave out the
+// lineage KB and its artifacts' names; an untracked destination names them.
+func TestTrackedBlockEnvironmentLeavesOutLineageKBs(t *testing.T) {
+	for _, tracked := range []bool{true, false} {
+		var e *lineageEnv
+		var repo string
+		if tracked {
+			e, repo = trackedLineageEnv(t, "CLAUDE.md")
+		} else {
+			e, repo = trackedLineageEnv(t)
+		}
+		e.srv.set(func(s *lineageServer) {
+			s.agents = true
+			s.relations["client-kb"] = closureOf("core-kb")
+		})
+		if _, _, err := e.syncOut(t, syncOptions{}); err != nil {
+			t.Fatal(err)
+		}
+		got := readFileT(t, filepath.Join(repo, "CLAUDE.md"))
+		if !strings.Contains(got, "agent-client-kb") {
+			t.Errorf("tracked=%v: the hand-bound KB's agent is not named:\n%s", tracked, got)
+		}
+		named := strings.Contains(got, "core-kb") || strings.Contains(got, "agent-core-kb")
+		if tracked && named {
+			t.Errorf("the tracked block names the lineage KB or its agent:\n%s", got)
+		}
+		if !tracked && !strings.Contains(got, "agent-core-kb") {
+			t.Errorf("the untracked block does not name the lineage agent:\n%s", got)
+		}
+		if _, err := os.Stat(filepath.Join(repo, ".claude", "agents", "agent-core-kb.md")); err != nil {
+			t.Errorf("tracked=%v: the lineage agent is not installed: %v", tracked, err)
 		}
 	}
 }
