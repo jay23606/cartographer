@@ -1167,6 +1167,7 @@ type ReplaceOptions struct {
 // failures, non-200 responses, and an old version are retried; a malformed
 // /health response fails immediately. Zero mounted KBs do not affect this —
 // /health stays 200 regardless of readiness (D84).
+// The /health probes below go to config.TLSHealthAddr when TLS is on (cfg.LocalProbeAddr).
 func (m *Manager) Replace(opts ReplaceOptions) error {
 	configPath, err := m.EffectiveConfigPath(opts.ConfigPath)
 	if err != nil {
@@ -1230,6 +1231,7 @@ func (m *Manager) Replace(opts ReplaceOptions) error {
 // build), after a restart the caller already made: it signals nothing. A
 // service configured without an HTTP address has nothing to verify. On darwin
 // the error carries the job's launchctl state (#2177).
+// The /health read goes to config.TLSHealthAddr when TLS is on (cfg.LocalProbeAddr).
 func (m *Manager) VerifyServing(opts ReplaceOptions) error {
 	configPath, err := m.EffectiveConfigPath(opts.ConfigPath)
 	if err != nil {

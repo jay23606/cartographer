@@ -162,7 +162,8 @@ func cmdUpgradeRepair(args []string) int {
 	// The service definition launches this binary (it already did, or it was
 	// just switched to it): only then does its build say anything.
 	expectedBuild := expectedBuildFor(switched || (st.ServiceBinPath != "" && repairSameBinaryFn(st.ServiceBinPath)))
-	if switched {
+	// An empty target (TLS on, tls.health_addr off) has nothing to poll: skip the 30s wait.
+	if switched && st.ProbeTarget() != "" {
 		// The reloaded job starts the new binary by itself: give it time to
 		// serve before ensureServiceCurrent decides, so a slow start does not
 		// cost a second graceful replacement.
