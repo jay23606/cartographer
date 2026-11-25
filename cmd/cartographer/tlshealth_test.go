@@ -5,6 +5,7 @@ package main
 import (
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,21 @@ func healthDo(t *testing.T, method, url string) *http.Response {
 	return resp
 }
 
+// waitBootGateOpen waits until /ready on the health address stops answering
+// the boot gate's 503: startTLSServer returns once /health answers, which the
+// gate does too, so a test that needs the mounted KBs would race the bootstrap.
+func waitBootGateOpen(t *testing.T, health string) {
+	t.Helper()
+	for deadline := time.Now().Add(gitxtest.Deadline(5 * time.Second)); ; time.Sleep(20 * time.Millisecond) {
+		if healthDo(t, "GET", "http://"+health+"/ready").StatusCode != http.StatusServiceUnavailable {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the boot gate never opened")
+		}
+	}
+}
+
 // AC-tls-native-10: the health listener answers GET and HEAD of /health and
 // /ready only, every other route and method with 404, and never sets HSTS.
 func TestHealthListenerServesOnlyProbes(t *testing.T) {
@@ -38,6 +54,7 @@ func TestHealthListenerServesOnlyProbes(t *testing.T) {
 	if host, _, _ := net.SplitHostPort(s.health); host != "127.0.0.1" {
 		t.Fatalf("health address %q is not loopback", s.health)
 	}
+	waitBootGateOpen(t, s.health)
 	base := "http://" + s.health
 	for _, tc := range []struct {
 		method, path string
@@ -69,6 +86,7 @@ func TestHealthListenerServesOnlyProbes(t *testing.T) {
 // /ready needs a token once auth is on, as on the public listener.
 func TestHealthListenerReadyNeedsTokenWithAuth(t *testing.T) {
 	s := startTLSServer(t, config.AuthConfig{Mode: "on", Tokens: []config.TokenSpec{{Token: "tok-example-0123456789abcdef", Scopes: []string{"kb:kb-a:rw"}}}}, config.TLSConfig{Enabled: true}, true)
+	waitBootGateOpen(t, s.health)
 	if got := healthDo(t, "GET", "http://"+s.health+"/ready").StatusCode; got != http.StatusUnauthorized {
 		t.Errorf("GET /ready without a token = %d, want 401", got)
 	}
@@ -146,4 +164,22 @@ func TestTLSStartReleasesPortsOnBindError(t *testing.T) {
 		}
 		again.Close()
 	})
+}
+
+// The health listener is always loopback: its Host guard does not depend on the
+// public address, which here is non-loopback with auth off (no guard inside).
+func TestHealthServerRejectsForeignHost(t *testing.T) {
+	inner := withLoopbackHostGuard(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}), "0.0.0.0:8080", false)
+	h := newHealthServer("127.0.0.1:0", inner).Handler
+	for host, want := range map[string]int{"evil.example.com": 403, "127.0.0.1:8081": 200} {
+		req := httptest.NewRequest(http.MethodGet, "/health", nil)
+		req.Host = host
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if rec.Code != want {
+			t.Errorf("Host %q = %d, want %d", host, rec.Code, want)
+		}
+	}
 }

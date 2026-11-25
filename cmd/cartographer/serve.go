@@ -1021,9 +1021,13 @@ func serveHTTP(addr string, boot func(phase func(string)) kbBootstrap, authCfg c
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownHTTPTimeout)
 		defer cancel()
 		if healthSrv != nil {
-			if err := healthSrv.Shutdown(ctx); err != nil {
+			// Its own short budget: a lingering probe connection must not eat
+			// the public listener's drain time.
+			hctx, hcancel := context.WithTimeout(context.Background(), healthShutdownTimeout)
+			if err := healthSrv.Shutdown(hctx); err != nil {
 				log.Printf("health listener shutdown: %v", err)
 			}
+			hcancel()
 		}
 		if err := httpSrv.Shutdown(ctx); err != nil {
 			log.Printf("HTTP server shutdown: %v", err)

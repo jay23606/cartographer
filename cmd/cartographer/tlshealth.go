@@ -5,6 +5,8 @@ import (
 	"net"
 	"net/http"
 	"time"
+
+	"github.com/BeppeTemp/cartographer/internal/mcpserver"
 )
 
 // healthOnly lets through GET and HEAD of exactly /health and /ready, to the
@@ -24,12 +26,18 @@ func healthOnly(next http.Handler) http.Handler {
 	})
 }
 
+// healthShutdownTimeout bounds the drain of the health listener, apart from
+// the public one's shutdownHTTPTimeout.
+const healthShutdownTimeout = 3 * time.Second
+
 // newHealthServer is the http.Server of the health listener: the public
-// server's read timeouts, the probe-only handler.
+// server's read timeouts, the probe-only handler. The listener is always
+// loopback, so the Host guard is unconditional here: the inner handler's guard
+// is decided from the public address and may be absent.
 func newHealthServer(addr string, inner http.Handler) *http.Server {
 	return &http.Server{
 		Addr:              addr,
-		Handler:           healthOnly(inner),
+		Handler:           mcpserver.LoopbackHostGuard(healthOnly(inner)),
 		ReadHeaderTimeout: 15 * time.Second,
 		ReadTimeout:       60 * time.Second,
 		IdleTimeout:       120 * time.Second,
