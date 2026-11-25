@@ -25,7 +25,7 @@ type CrossLink struct {
 var kbNameRe = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // ParseCrossLink reads the target of a wiki-link (group 1 of wikiLinkRe: no
-// "#section", no label). ok is false when raw does not start with "kb:", so
+// "#section", no label). ok is false when raw does not start with the kb: scheme, so
 // it is an ordinary link.
 func ParseCrossLink(raw string) (l CrossLink, ok bool) {
 	rest, ok := strings.CutPrefix(raw, kbScheme)
