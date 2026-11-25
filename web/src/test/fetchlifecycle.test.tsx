@@ -101,10 +101,10 @@ describe("App fetches", () => {
     const user = userEvent.setup();
     render(<App />);
     const rail = await screen.findByRole("navigation", { name: "Atlas navigation" });
-    await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("/graph"))).toHaveLength(1));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("/graph") && !String(u).includes("/graph/external"))).toHaveLength(1));
     await user.click(within(rail).getByRole("button", { name: /^Atlas/ }));
     await waitFor(() => expect(window.location.search).not.toContain("scope="));
-    await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("/graph"))).toHaveLength(2));
+    await waitFor(() => expect(fetchMock.mock.calls.filter(([u]) => String(u).includes("/graph") && !String(u).includes("/graph/external"))).toHaveLength(2));
     const count = (part: string) => fetchMock.mock.calls.filter(([u]) => String(u).includes(part)).length;
     expect(count("/overview")).toBe(1);
     expect(count("/artifacts")).toBe(1);

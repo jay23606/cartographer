@@ -174,6 +174,7 @@ export function stubApi(overrides: Record<string, () => Response> = {}) {
       if (url.includes(fragment)) return make();
     }
     if (url.includes("/kbs/") && url.includes("/overview")) return json(overview);
+    if (url.includes("/kbs/") && url.includes("/graph/external")) return json({ edges: [], limit: 2000, truncated: false });
     if (url.includes("/kbs/") && url.includes("/graph")) return json(graph);
     if (url.includes("/kbs/") && url.includes("/lint")) return json(lint);
     if (url.includes("/kbs/") && url.includes("/artifacts")) return json(artifactList);

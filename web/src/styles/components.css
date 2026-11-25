@@ -3336,6 +3336,18 @@ code.mapcontract__label {
   background: var(--surface-2);
 }
 
+/* A cross-KB row the reader cannot follow: muted text, or the broken style. */
+.inspector__link--muted {
+  cursor: default;
+  color: var(--text-muted);
+}
+
+.inspector__link--broken {
+  cursor: default;
+  text-decoration: line-through;
+  color: var(--sev-warning);
+}
+
 .inspector__link-swatch {
   flex: none;
   width: 8px;

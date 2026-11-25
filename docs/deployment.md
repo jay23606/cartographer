@@ -1341,6 +1341,7 @@ With `web.enabled` on — the default in HTTP mode — the same binary also serv
   read again when the KB changes, when the revision moves, when the tab becomes visible, and every 10 s while
   the state is unsettled or every minute otherwise (never in a hidden tab). A principal that does not see the
   whole KB, an older server and the static demo get no indicator.
+  A `[[kb:<name>/<id>]]` link in a page body is a link in the Atlas only when the server answers `resolved` for it (the concept's `cross` list); `missing`, `unresolved` and `out_of_scope` show the text as written, with no address and no title, and a link the server did not list is text too. A resolved link opens that page in the other KB. The concept panel lists the cross-KB edges under "Other KBs", and the graph draws a resolved edge as a small stub node labelled with the page id (`GET /kbs/{kb}/graph/external`, fetched beside the graph, never part of it).
   The rail holds the panels Atlas, Activity, Work, Health, Artifacts and Settings (D818, D1901), and, only when
   an approved plugin declares a view or an app, an "Extensions" group between Artifacts and Settings (D1938): a view opens a page
   (`?panel=ext&ext=<plugin>/<name>`) that reads one public read-only route of the API as the Atlas's own principal and draws it with

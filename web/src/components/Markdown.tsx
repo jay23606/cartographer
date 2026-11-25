@@ -1,6 +1,7 @@
 import ReactMarkdown from "react-markdown";
 import rehypeSanitize from "rehype-sanitize";
 import remarkGfm from "remark-gfm";
+import type { CrossEdge } from "../api/types";
 
 /**
  * Concept bodies are KB content, and a KB is written by agents and by people.
@@ -22,6 +23,8 @@ export function Markdown({
   hrefOf,
   conceptId,
   outbound,
+  cross,
+  onOpenCross,
 }: {
   children: string;
   /** Called with a concept id when a [[wiki-link]] or a relative `.md` link is followed. */
@@ -34,6 +37,11 @@ export function Markdown({
   /** The ids the server resolved this body's links to; picks between the two
    *  bases an expanded concept's relative link can have (D149). */
   outbound?: readonly string[];
+  /** The cross-KB edges the server answered for this concept: a `[[kb:b/x]]`
+   *  is a link only when this list holds it as `resolved`. */
+  cross?: readonly CrossEdge[];
+  /** Called with the KB and id of a resolved cross-KB link that is followed. */
+  onOpenCross?(kb: string, id: string): void;
 }) {
   return (
     <div className="markdown">
@@ -42,6 +50,24 @@ export function Markdown({
         rehypePlugins={[rehypeSanitize]}
         components={{
           a({ node: _node, href, children: text, ...props }) {
+            if (href?.startsWith(CROSS_HREF)) {
+              const target = decodeCrossTarget(href.slice(CROSS_HREF.length));
+              if (target === null) return <span>{text}</span>;
+              return (
+                <a
+                  {...props}
+                  href={`?kb=${encodeURIComponent(target.kb)}&concept=${encodeURIComponent(target.id)}`}
+                  className="markdown__wikilink markdown__crosslink"
+                  onClick={(event) => {
+                    if (!onOpenCross) return;
+                    event.preventDefault();
+                    onOpenCross(target.kb, target.id);
+                  }}
+                >
+                  {text}
+                </a>
+              );
+            }
             const target = href?.startsWith(CONCEPT_HREF)
               ? decodeConceptTarget(href.slice(CONCEPT_HREF.length))
               : conceptId !== undefined && href
@@ -89,7 +115,7 @@ export function Markdown({
           },
         }}
       >
-        {linkWikiLinks(children)}
+        {linkWikiLinks(children, cross)}
       </ReactMarkdown>
     </div>
   );
@@ -115,16 +141,48 @@ function decodeConceptTarget(encoded: string): string | null {
  *  URL: the renderer turns it into in-atlas navigation. */
 const CONCEPT_HREF = "concept-link/";
 
+/** The href a resolved cross-KB wiki-link is rewritten to: `cross-link/<kb>/<id>`,
+ *  both parts percent-encoded. A cross link the server did not call `resolved`
+ *  gets no href at all, so the reader sees the text and nothing else. */
+const CROSS_HREF = "cross-link/";
+
+function decodeCrossTarget(encoded: string): { kb: string; id: string } | null {
+  const slash = encoded.indexOf("/");
+  if (slash <= 0) return null;
+  try {
+    return { kb: decodeURIComponent(encoded.slice(0, slash)), id: decodeURIComponent(encoded.slice(slash + 1)) };
+  } catch {
+    return null;
+  }
+}
+
+/** `kb:<name>[@server]/<id>` as written in a wiki-link, or null when malformed. */
+function parseCrossTarget(raw: string): { kb: string; id: string; server: boolean } | null {
+  const m = /^kb:([A-Za-z0-9_-]+)(@[^/]*)?\/(.+)$/.exec(raw);
+  const [, name, server, id] = m ?? [];
+  return name && id ? { kb: name, id: id.replace(/\.md$/, ""), server: server !== undefined } : null;
+}
+
 /**
  * linkWikiLinks turns the KB's [[id]], [[id#section]] and [[id|label]] links
  * into Markdown links the renderer can make clickable. Code is left alone --
  * fenced blocks and inline spans show a wiki-link as the text it is -- and the
  * label defaults to the id, which is what the KB author wrote.
  */
-export function linkWikiLinks(body: string): string {
+export function linkWikiLinks(body: string, cross?: readonly CrossEdge[]): string {
   return body.replace(CODE_OR_WIKILINK, (m, _fence, _fenceChar, _ticks, id: string | undefined, _section, label: string | undefined) => {
     if (id === undefined) return m;
     const text = (label ?? id).trim().replace(/[[\]]/g, "");
+    if (id.trim().startsWith("kb:")) {
+      // A cross-KB link is a link only when the server says `resolved`; any
+      // other state, and a link the server never listed, is the text as written.
+      const t = parseCrossTarget(id.trim());
+      if (t === null || t.server) return text;
+      const ok = (cross ?? []).some(
+        (e) => e.direction === "out" && e.kb === t.kb && e.id === t.id && e.state === "resolved",
+      );
+      return ok ? `[${text}](${CROSS_HREF}${encodeURIComponent(t.kb)}/${encodeURIComponent(t.id)})` : text;
+    }
     return `[${text}](${CONCEPT_HREF}${encodeURIComponent(id.trim())})`;
   });
 }

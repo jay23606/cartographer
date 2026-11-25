@@ -7,6 +7,7 @@ import {
   fetchChecks,
   fetchConcept,
   fetchGraph,
+  fetchExternalEdges,
   fetchGraphClusters,
   fetchKBs,
   fetchArtifacts,
@@ -31,6 +32,7 @@ import type {
   CheckCatalog,
   ClusterGraph,
   Concept,
+  ExternalEdge,
   GitConflict,
   GraphSnapshot,
   KBSummary,
@@ -74,6 +76,7 @@ import {
 import { initialMotion } from "./lib/graph3d/motion";
 import { hasWebGL } from "./lib/webgl";
 import { useLiveRevision } from "./lib/live";
+import { parseStubId, withExternalEdges } from "./lib/external";
 import { snapshotCommunities, type Communities } from "./lib/communities";
 import {
   ARTIFACT_PANELS,
@@ -135,6 +138,7 @@ export function App() {
   const [graphError, setGraphError] = useState<unknown>(null);
   const [graphLoading, setGraphLoading] = useState(false);
 
+  const [external, setExternal] = useState<ExternalEdge[] | null>(null);
   const [concept, setConcept] = useState<Concept | null>(null);
   const [conceptError, setConceptError] = useState<unknown>(null);
   const [conceptLoading, setConceptLoading] = useState(false);
@@ -831,6 +835,12 @@ export function App() {
 
   const selectConcept = useCallback(
     (id: string | null) => {
+      // A stub node of the graph is a page of another KB: the click opens it there.
+      const stub = id ? parseStubId(id) : null;
+      if (stub) {
+        navigate({ kb: stub.kb, panel: "atlas", concept: stub.id, scope: null, artifact: null });
+        return;
+      }
       navigate({ concept: id });
       // On a narrow screen a selection is only visible in its sheet.
       if (id && narrow) setSheet("inspector");
@@ -901,6 +911,19 @@ export function App() {
         : null,
     [clusterGraph, unfoldCluster, foldCluster],
   );
+
+  // The external edges come from a route of their own, never from the cached
+  // graph: a state depends on this caller's rights on the other KB. A failed
+  // read draws no stub, the graph itself is unaffected.
+  useEffect(() => {
+    if (!activeKB || !snapshotKey.startsWith(`${activeKB}\u0000`)) return;
+    const controller = new AbortController();
+    fetchExternalEdges(activeKB, view.scope, controller.signal)
+      .then((r) => setExternal(r.edges.length > 0 ? r.edges : null))
+      .catch(() => {});
+    return () => controller.abort();
+  }, [activeKB, view.scope, snapshotKey]);
+  const drawnSnapshot = useMemo(() => (snapshot ? withExternalEdges(snapshot, external) : snapshot), [snapshot, external]);
 
   const expandConcept = useCallback(
     (id: string) => {
@@ -999,6 +1022,7 @@ export function App() {
         navigate({ panel: artifactPanel(kind), artifact: kind === "instructions" ? null : `${kind}/${name}` })
       }
       onNavigate={selectConcept}
+      onOpenCross={(kb, id) => navigate({ kb, panel: "atlas", concept: id, scope: null, artifact: null })}
       hrefOf={(id) => viewStateToSearch({ ...view, concept: id })}
       onPreview={setPreview}
       onClose={closeInspector}
@@ -1196,7 +1220,7 @@ export function App() {
                 </div>
               ) : (
                 <GraphView
-                  snapshot={snapshot}
+                  snapshot={drawnSnapshot ?? snapshot}
                   layoutKey={snapshotKey}
                   loadBirths={activeKB && !view.scope ? () => fetchBirths(activeKB).then((r) => r.births) : undefined}
                   kbName={activeKB ?? undefined}

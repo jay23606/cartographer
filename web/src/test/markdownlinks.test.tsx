@@ -81,3 +81,42 @@ describe("a malformed wiki-link target", () => {
     expect(container.querySelector("a.markdown__wikilink")).not.toBeNull();
   });
 });
+
+describe("linkWikiLinks cross", () => {
+  // AC-cross-kb-links-21
+  const edge = (state: "resolved" | "missing" | "unresolved" | "out_of_scope", kb = "kb-b", id = "ops/x") => [
+    { direction: "out" as const, kb, id, state },
+  ];
+  it("renders a resolved cross link as a link", () => {
+    expect(linkWikiLinks("see [[kb:kb-b/ops/x]]", edge("resolved"))).toBe(
+      "see [kb:kb-b/ops/x](cross-link/kb-b/ops%2Fx)",
+    );
+    expect(linkWikiLinks("see [[kb:kb-b/ops/x|the runbook]]", edge("resolved"))).toBe(
+      "see [the runbook](cross-link/kb-b/ops%2Fx)",
+    );
+  });
+  it.each(["unresolved", "missing", "out_of_scope"] as const)("renders a %s link as plain text", (state) => {
+    expect(linkWikiLinks("see [[kb:kb-b/ops/x]]", edge(state))).toBe("see kb:kb-b/ops/x");
+  });
+  it("leaves a code span, an unlisted link and a server-qualified one as text without an href", () => {
+    expect(linkWikiLinks("`[[kb:kb-b/ops/x]]`", edge("resolved"))).toBe("`[[kb:kb-b/ops/x]]`");
+    expect(linkWikiLinks("[[kb:kb-b/ops/y]]", edge("resolved"))).toBe("kb:kb-b/ops/y");
+    expect(linkWikiLinks("[[kb:kb-b/ops/x]]")).toBe("kb:kb-b/ops/x");
+    expect(linkWikiLinks("[[kb:kb-b@host/ops/x]]", edge("resolved"))).toBe("kb:kb-b@host/ops/x");
+  });
+  it("follows a resolved link into the other KB, and draws the others with no href", async () => {
+    const onOpenCross = vi.fn();
+    render(
+      <Markdown
+        cross={[...edge("resolved"), { direction: "out", kb: "kb-c", id: "a", state: "unresolved" }]}
+        onOpenCross={onOpenCross}
+      >
+        {"[[kb:kb-b/ops/x]] and [[kb:kb-c/a]]"}
+      </Markdown>,
+    );
+    await userEvent.click(screen.getByRole("link", { name: "kb:kb-b/ops/x" }));
+    expect(onOpenCross).toHaveBeenCalledWith("kb-b", "ops/x");
+    expect(screen.getAllByRole("link")).toHaveLength(1);
+    expect(screen.getByText(/kb:kb-c\/a/)).toBeTruthy();
+  });
+});

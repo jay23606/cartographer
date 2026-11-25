@@ -248,6 +248,27 @@ export interface OutlineEntry {
   bytes: number;
 }
 
+/** One cross-KB edge of a page. `unresolved` is the one neutral state for every
+ *  cause the reader may not be told; `out_of_scope` is never sent to the Atlas
+ *  (it carries no routed set) but is rendered as muted text if it were. */
+export interface CrossEdge {
+  direction: "out" | "in";
+  kb: string;
+  id: string;
+  state?: "resolved" | "missing" | "unresolved" | "out_of_scope";
+}
+
+/** An edge of `GET /graph/external`: a page of this KB and the page of another one. */
+export interface ExternalEdge extends CrossEdge {
+  from: string;
+}
+
+export interface ExternalEdges {
+  edges: ExternalEdge[];
+  limit: number;
+  truncated: boolean;
+}
+
 export interface Concept {
   id: string;
   title: string;
@@ -259,6 +280,8 @@ export interface Concept {
   content_hash: string;
   outbound: string[];
   inbound: string[];
+  /** Edges to and from pages of other KBs, per caller; never null. */
+  cross?: CrossEdge[];
   broken: string[];
   /** Skills, agents and hooks that reference this concept explicitly; absent
    *  for a principal that cannot see the whole KB. */

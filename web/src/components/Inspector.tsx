@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Concept, LintFinding } from "../api/types";
+import type { Concept, CrossEdge, LintFinding } from "../api/types";
 import { withoutRedundantLinksSection } from "../lib/linksection";
 import { collectionVar } from "../lib/palette";
 import { ConceptHistory } from "./ConceptHistory";
@@ -20,6 +20,8 @@ interface Props {
    *  name, with the id beneath. */
   titleOf?(id: string): string | undefined;
   onNavigate(id: string): void;
+  /** Opens a page of another KB (a resolved cross-KB link). */
+  onOpenCross?(kb: string, id: string): void;
   /** The Atlas address of a concept, for links that open in a new tab. */
   hrefOf?(id: string): string;
   onPreview(id: string | null): void;
@@ -48,6 +50,7 @@ export function Inspector({
   findings,
   titleOf = () => undefined,
   onNavigate,
+  onOpenCross,
   hrefOf,
   onPreview,
   onOpenArtifact,
@@ -76,6 +79,7 @@ export function Inspector({
   const linkCount =
     (concept?.outbound.length ?? 0) +
     (concept?.inbound.length ?? 0) +
+    (concept?.cross?.length ?? 0) +
     (concept?.used_by?.length ?? 0) +
     (concept?.superseded_by ? 1 : 0) +
     (concept?.supersedes?.length ?? 0);
@@ -181,7 +185,14 @@ export function Inspector({
               )}
               {concept.body.trim() ? (
                 <ContentBoundary resetKey={concept.id}>
-                  <Markdown onNavigate={onNavigate} hrefOf={hrefOf} conceptId={concept.id} outbound={concept.outbound}>
+                  <Markdown
+                    onNavigate={onNavigate}
+                    hrefOf={hrefOf}
+                    conceptId={concept.id}
+                    outbound={concept.outbound}
+                    cross={concept.cross}
+                    onOpenCross={onOpenCross}
+                  >
                     {withoutRedundantLinksSection(withoutLeadingTitle(concept.body), concept.id, concept.outbound)}
                   </Markdown>
                 </ContentBoundary>
@@ -207,6 +218,7 @@ export function Inspector({
                 onNavigate={onNavigate}
                 onPreview={onPreview}
               />
+              <CrossGroup edges={concept.cross ?? []} onOpenCross={onOpenCross} />
               {(!!concept.superseded_by || !!concept.supersedes?.length) && (
                 <section className="inspector__group" aria-label="Supersede chain">
                   <h3 className="inspector__group-title">Supersede chain</h3>
@@ -317,6 +329,69 @@ export function Inspector({
         )}
       </div>
     </aside>
+  );
+}
+
+/** The pages of other KBs this concept links to or is linked from. A resolved
+ *  row is a link; `unresolved` is one muted text for every cause (absent, not
+ *  served, not readable), so the tooltip says nothing a reader may not know;
+ *  `missing` takes the broken-link style. Never a title. */
+function CrossGroup({ edges, onOpenCross }: { edges: CrossEdge[]; onOpenCross?(kb: string, id: string): void }) {
+  if (edges.length === 0) return null;
+  return (
+    <section className="inspector__group" aria-label="Other KBs">
+      <h3 className="inspector__group-title">
+        Other KBs <span className="inspector__count">{edges.length}</span>
+      </h3>
+      <ul className="inspector__links">
+        {edges.map((e) => {
+          const key = `${e.direction}/${e.kb}/${e.id}`;
+          const arrow = e.direction === "in" ? "←" : "→";
+          const label = (
+            <span className="inspector__link-text">
+              <span className="inspector__link-id">
+                {e.kb}: {e.id}
+              </span>
+            </span>
+          );
+          if (e.state === "unresolved" || e.state === "out_of_scope") {
+            return (
+              <li key={key}>
+                <span className="inspector__link inspector__link--muted" title="not available to you or not found">
+                  <span className="inspector__link-kind" aria-hidden="true">
+                    {arrow}
+                  </span>
+                  {label}
+                </span>
+              </li>
+            );
+          }
+          if (e.state === "missing") {
+            return (
+              <li key={key}>
+                <span className="inspector__link inspector__link--broken">
+                  <span className="inspector__link-kind" aria-hidden="true">
+                    {arrow}
+                  </span>
+                  {label}
+                </span>
+              </li>
+            );
+          }
+          // `resolved`, or an inbound row, which the server sends only for pages the caller reads.
+          return (
+            <li key={key}>
+              <button type="button" className="inspector__link" onClick={() => onOpenCross?.(e.kb, e.id)} disabled={!onOpenCross}>
+                <span className="inspector__link-kind" aria-hidden="true">
+                  {arrow}
+                </span>
+                {label}
+              </button>
+            </li>
+          );
+        })}
+      </ul>
+    </section>
   );
 }
 
