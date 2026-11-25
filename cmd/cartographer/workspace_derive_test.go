@@ -426,3 +426,26 @@ func TestDerivedProjection_AntigravityLocalRulesFallback(t *testing.T) {
 		t.Errorf(".agents/rules/cartographer.md should be removed on prune, err=%v", err)
 	}
 }
+
+// AC-lineage-9: a lineage KB is never a seed of derivation: its paths.yaml
+// derives no binding, though the provider's BoundKBs includes it.
+func TestDerivationSeedsAreOwnKBs(t *testing.T) {
+	repo := cloneOf(t, "example.com/owner/core-tools")
+	cfg := workspaceScoped("claude", "kb-a", "core-kb")
+	cfg.Paths = map[string]string{"core-tools": repo}
+	if err := cfg.Bind("claude", "kb-a"); err != nil {
+		t.Fatal(err)
+	}
+	cfg.SetDerived(clientconfig.DerivedState{Lineage: map[string]clientconfig.DerivedLineage{"kb-a": {Closure: []string{"core-kb"}}}})
+	if bound, _ := cfg.BoundKBs("claude"); !containsString(bound, "core-kb") {
+		t.Fatalf("BoundKBs = %v, want the lineage KB", bound)
+	}
+	if _, cands := derivationScope(cfg, []string{"claude"}); containsString(cands, "core-kb") {
+		t.Errorf("a lineage KB is a derivation candidate: %v", cands)
+	}
+	decl := contract.PathRegistry{Repos: map[string]contract.PathDecl{"core-tools": {Description: "d", Remote: "example.com/owner/core-tools"}}}
+	st := derive(cfg, prefetchOf(map[string]contract.PathRegistry{"core-kb": decl}))
+	if len(st.Bindings["claude"]) != 0 {
+		t.Errorf("a lineage KB derived a binding: %+v", st.Bindings)
+	}
+}

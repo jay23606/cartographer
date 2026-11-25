@@ -395,6 +395,7 @@ func rewriteBindings(old, newName string) error {
 	return withClientConfig(dir, func(cfg *clientconfig.Config) error {
 		for p, b := range cfg.Clients {
 			b.KBs = renameInList(b.KBs, old, newName)
+			b.Exclude = renameInList(b.Exclude, old, newName)
 			cfg.Clients[p] = b
 		}
 		for p, ws := range cfg.Workspaces {

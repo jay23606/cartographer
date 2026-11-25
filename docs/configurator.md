@@ -1711,6 +1711,8 @@ providers:                      # one entry per provider (D1731); a provider wit
     config_dirs: [~/.claude/accounts/b]   # extra Claude Code config dirs (CLAUDE_CONFIG_DIR) whose .claude.json also gets the MCP entry (D755); claude only; does not make the binding explicit
     access: read                # with tools: minimal, the read-min profile of `connect --access read-min` (D1184)
     tools: minimal
+    no_lineage: false           # with kbs: true follows none of the KBs the bound KBs depend on; absent = they are followed (their stored closure, set by `sync`)
+    exclude: [core-kb]          # with kbs: KBs never brought by lineage; one that is also in kbs is a mistake (own KBs stay bound)
     workspaces:                 # explicit workspace bindings, [{path, kbs, worktrees}] (D193); set by `cartographer workspace bind`
       - path: ~/projects/work
         kbs: [homelab]
