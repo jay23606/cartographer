@@ -25,8 +25,9 @@ export function DashboardView({
     <div className="dashboard">
       {data.description ? <p className="page-note">{data.description}</p> : null}
       <div className="dashboard__grid">
-        {data.widgets.map((w) => (
-          <WidgetCard key={w.id} widget={w} onOpen={onOpen} />
+        {data.widgets.map((w, i) => (
+          // The server keeps a widget that repeats an id (flagged, drawn as an error tile): the id alone is not a unique key.
+          <WidgetCard key={`${w.id}-${i}`} widget={w} onOpen={onOpen} />
         ))}
       </div>
     </div>

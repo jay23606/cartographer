@@ -1,5 +1,5 @@
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { DashboardView } from "../components/DashboardView";
 import type { DashboardResolved } from "../api/types";
 
@@ -22,6 +22,22 @@ describe("DashboardView", () => {
     expect(screen.getByRole("alert")).toHaveTextContent("unknown field");
     expect(screen.getByRole("heading", { level: 2, name: "Open" })).toBeInTheDocument();
     expect(screen.getByText("7", { selector: ".dashboard__stat" })).toBeInTheDocument();
+  });
+
+  it("draws both cards of two widgets that repeat an id, with no duplicate-key warning", () => {
+    const warn = vi.spyOn(console, "error").mockImplementation(() => {});
+    render(
+      <DashboardView
+        data={base([
+          { id: "dup", type: "stat", title: "First", total: 1 },
+          { id: "dup", type: "stat", title: "Second", total: 2, error: "duplicate widget id" },
+        ])}
+      />,
+    );
+    expect(screen.getByRole("heading", { level: 2, name: "First" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { level: 2, name: "Second" })).toBeInTheDocument();
+    expect(warn.mock.calls.flat().join(" ")).not.toMatch(/same key/);
+    warn.mockRestore();
   });
 
   it("names a type it does not draw yet and works with structural keys only", () => {
