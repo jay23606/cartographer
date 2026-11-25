@@ -379,3 +379,47 @@ func TestLineageRelationsUnavailableKeepsTheEntry(t *testing.T) {
 		t.Error("the lineage KB was unbound")
 	}
 }
+
+// The server's unresolved list is untrusted: a reason outside the closed set
+// (control characters, a long string) and a repeated name are not stored, at
+// store time and on load.
+func TestLineageUnresolvedIsCleaned(t *testing.T) {
+	cfg := workspaceScoped("claude", "kb-a")
+	cfg.KnownKBs = []string{"kb-a", "core-kb"}
+	rel := *closureOf("core-kb")
+	rel.Unresolved = []contract.RelationUnresolved{
+		{Name: "ghost", Reason: "not_mounted"},
+		{Name: "ghost", Reason: "cycle"},
+		{Name: "evil", Reason: "bad\x1b[31m reason"},
+		{Name: "long", Reason: strings.Repeat("x", 4096)},
+		{Name: "loop", Reason: "too_deep"},
+	}
+	got := lineageFromRelations(cfg, "kb-a", rel)
+	want := []clientconfig.LineageUnresolved{{Name: "ghost", Reason: "not_mounted"}, {Name: "loop", Reason: "too_deep"}}
+	if !reflect.DeepEqual(got.Unresolved, want) {
+		t.Errorf("unresolved = %+v, want %+v", got.Unresolved, want)
+	}
+}
+
+// With the server's KB list unknown this run (cfg.KnownKBs empty: /health
+// listed none), a stored lineage entry is kept, never filtered to nothing.
+func TestLineageKeptWhenKBListUnknown(t *testing.T) {
+	cfg := workspaceScoped("claude", "kb-a")
+	cfg.KnownKBs = nil
+	if err := cfg.Bind("claude", "kb-a"); err != nil {
+		t.Fatal(err)
+	}
+	cfg.SetDerived(clientconfig.DerivedState{Lineage: map[string]clientconfig.DerivedLineage{"kb-a": {Closure: []string{"core-kb"}}}})
+	pre := &prefetched{
+		cs:  candidateSet{Named: map[string][]contract.Artifact{"kb-a": nil}, Relations: map[string]contract.Relations{"kb-a": *closureOf("core-kb")}},
+		kbs: map[string]bool{"kb-a": true},
+	}
+	next := clientconfig.DerivedState{}
+	notes := computeLineage(cfg, pre, &next, nil)
+	if got := next.Lineage["kb-a"].Closure; !reflect.DeepEqual(got, []string{"core-kb"}) {
+		t.Errorf("closure = %v, want the stored one kept", got)
+	}
+	if !reflect.DeepEqual(notes.Unlisted, []string{"kb-a"}) {
+		t.Errorf("notes = %+v", notes)
+	}
+}

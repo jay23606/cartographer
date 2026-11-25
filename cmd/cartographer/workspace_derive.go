@@ -94,6 +94,9 @@ func deriveWorkspaceBindings(cfg *clientconfig.Config, targets []string, dir str
 	for _, kb := range notes.Unavailable {
 		fmt.Fprintf(errw, "relations of %s unavailable on the server: lineage left as it was\n", escapeControl(kb))
 	}
+	for _, kb := range notes.Unlisted {
+		fmt.Fprintf(errw, "KB list unknown: lineage of %s left as it was\n", escapeControl(kb))
+	}
 	if notes.Predates {
 		fmt.Fprintln(errw, "server predates KB relations: lineage left as it was")
 	}
@@ -217,6 +220,16 @@ func computeLineage(cfg *clientconfig.Config, pre *prefetched, next *clientconfi
 			continue
 		}
 		rel, hasRel := pre.cs.Relations[seed]
+		if len(cfg.KnownKBs) == 0 {
+			// The mounted test below needs the server's KB list, which sync
+			// refreshes only when /health answered with one: without it an empty
+			// list would filter every name and unbind the stored lineage.
+			if hasOld {
+				notes.Unlisted = append(notes.Unlisted, seed)
+			}
+			keep()
+			continue
+		}
 		if pre.cs.RelationsUnavailable[seed] {
 			if hasOld {
 				notes.Unavailable = append(notes.Unavailable, seed)
@@ -253,6 +266,7 @@ func computeLineage(cfg *clientconfig.Config, pre *prefetched, next *clientconfi
 	}
 	sort.Strings(notes.Held)
 	sort.Strings(notes.Unavailable)
+	sort.Strings(notes.Unlisted)
 	next.Lineage = nil
 	if len(out) > 0 {
 		next.Lineage = out
@@ -264,6 +278,7 @@ func computeLineage(cfg *clientconfig.Config, pre *prefetched, next *clientconfi
 type lineageNotes struct {
 	Held        []string // lineage KBs kept because the server could not mount them
 	Unavailable []string // seeds whose relations the server could not read
+	Unlisted    []string // seeds kept because the server's KB list is not known this run
 	Predates    bool     // a seed answered with no relations: an older server
 }
 
@@ -293,7 +308,7 @@ func lineageFromRelations(cfg *clientconfig.Config, seed string, rel contract.Re
 		if len(l.Unresolved) == clientconfig.MaxLineageClosure {
 			break
 		}
-		if clientconfig.ValidKBName(u.Name) {
+		if clientconfig.ValidKBName(u.Name) && clientconfig.ValidLineageReason(u.Reason) && !clientconfig.HasUnresolved(l.Unresolved, u.Name) {
 			l.Unresolved = append(l.Unresolved, clientconfig.LineageUnresolved{Name: u.Name, Reason: u.Reason})
 		}
 	}
