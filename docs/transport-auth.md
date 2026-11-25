@@ -371,7 +371,7 @@ scopes nor roles has full access to every mounted KB — that absence is the
 declaration. A token that declares restrictions and ends up with none grants
 nothing: unrestricted access is never inferred from an empty policy (D179).
 
-### Links to another KB
+## Links to another KB
 
 A page may link a page of another KB mounted on the same server. What a caller
 is told of such a link is one of four states: `resolved` (the caller reads the
