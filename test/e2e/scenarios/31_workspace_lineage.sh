@@ -4,14 +4,14 @@
 #
 # Setup: client-kb declares `depends_on: core-kb` and a repository it works on (paths.yaml);
 # a folder is bound explicitly to client-kb and holds that repository (derived) and a second
-# repository that tracks an AGENTS.md-style CLAUDE.md. A second provider is bound to client-kb
+# repository, bound explicitly too, that tracks an AGENTS.md-style CLAUDE.md. A second provider is bound to client-kb
 # at provider scope.
 #
 # Verifies (operator channel only — no agent/model):
 #   1. A derived repository under an explicitly bound folder keeps core-kb.
 #   2. A provider bound to client-kb receives core-kb.
-#   3. A repository tracking CLAUDE.md stays byte-identical and `git status` clean while
-#      its skills arrive, and its status says the instructions are not written.
+#   3. A repository tracking CLAUDE.md never gets core-kb in it while core-kb's skills
+#      arrive, and its status says the instructions are not written.
 #   4. `--exclude core-kb` opts out: the next sync prunes core-kb's skill.
 #
 # Expected environment variables: E2E_TMP_DIR, E2E_HTTP_PORT, REPO_ROOT.
@@ -103,6 +103,9 @@ echo "--- Phase 1: a folder bound to client-kb, a provider bound to client-kb --
 run_client "${DIR}/connect-claude.log" connect claude --server-url "$SERVER_URL" --kb client-kb || true
 run_client "${DIR}/connect-codex.log" connect codex --server-url "$SERVER_URL" --kb client-kb || true
 run_client "${DIR}/bind.log" workspace bind claude "$FOLDER" --kb client-kb || true
+# A projection is written into the bound folder only: the repository that tracks
+# CLAUDE.md is bound itself, so the deepest binding is the one under test.
+run_client "${DIR}/bind-tracked.log" workspace bind claude "$REPO_TRACKED" --kb client-kb || true
 run_client "${DIR}/paths.log" paths set worked-on "$REPO_DERIVED" || true
 if run_client "${DIR}/sync1.log" sync; then
     _assert_pass "sync succeeds"
@@ -121,16 +124,15 @@ echo ""
 echo "--- Phase 3: a tracked instructions file is not edited for a lineage KB ---"
 assert_file_exists "${REPO_TRACKED}/.claude/skills/skill-core-kb/SKILL.md"
 assert_file_not_contains "${REPO_TRACKED}/CLAUDE.md" "core-kb"
-run_client "${DIR}/list.log" workspace list claude
-if [[ -z "$(git -C "$REPO_TRACKED" status --porcelain -- CLAUDE.md)" ]]; then
-    _assert_pass "the tracked CLAUDE.md is unmodified"
-else
-    _assert_fail "the tracked CLAUDE.md was modified"
-fi
+run_client "${DIR}/list.log" status
+# The repository is bound by hand to client-kb, so its block may enter the tracked
+# file; the lineage KB never does, and the status says why its instructions are absent.
+assert_file_contains "${REPO_TRACKED}/CLAUDE.md" "# Team rules"
+assert_file_contains "${DIR}/list.log" "instructions of core-kb (lineage) not written"
 
 echo ""
 echo "--- Phase 4: --exclude opts out ---"
-run_client "${DIR}/bind-exclude.log" workspace bind claude "$FOLDER" --kb client-kb --exclude core-kb || true
+run_client "${DIR}/bind-exclude.log" workspace bind claude "$REPO_TRACKED" --kb client-kb --exclude core-kb || true
 if run_client "${DIR}/sync2.log" sync; then
     _assert_pass "sync after the opt-out"
 else
