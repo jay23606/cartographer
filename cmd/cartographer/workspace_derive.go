@@ -5,6 +5,7 @@ import (
 	"io"
 	"slices"
 	"sort"
+	"time"
 
 	"github.com/BeppeTemp/cartographer/internal/clientconfig"
 	"github.com/BeppeTemp/cartographer/internal/configurator"
@@ -44,6 +45,9 @@ func (p *prefetched) covers(kbs []string) bool {
 
 // failedFor returns the prefetch's failures restricted to kbs.
 func (p *prefetched) failedFor(kbs []string) []kbPullFailure {
+	if p == nil {
+		return nil
+	}
 	want := make(map[string]bool, len(kbs))
 	for _, kb := range kbs {
 		want[kb] = true
@@ -71,13 +75,14 @@ func (p *prefetched) failedFor(kbs []string) []kbPullFailure {
 // It also stores the lineage of every seed KB (computeLineage). skipped names
 // the KBs the server was told to serve and could not mount (nil when /health
 // was not read): a lineage KB in it is held, not unbound.
-func deriveWorkspaceBindings(cfg *clientconfig.Config, targets []string, dir string, dryRun bool, skipped []string, errw io.Writer) (*prefetched, func() error, error) {
+func deriveWorkspaceBindings(cfg *clientconfig.Config, targets []string, dir string, dryRun bool, skipped []string, errw io.Writer) (*prefetched, widening, func() error, error) {
+	before := bindingSnapshot(cfg, targets)
 	providers, candidates := derivationScope(cfg, targets)
 	var pre *prefetched
 	if len(candidates) > 0 {
 		cs, failed, err := fetchCandidatesPartial(cfg, candidates)
 		if err != nil {
-			return nil, nil, err
+			return nil, widening{}, nil, err
 		}
 		kbs := make(map[string]bool, len(candidates))
 		for _, kb := range candidates {
@@ -102,6 +107,28 @@ func deriveWorkspaceBindings(cfg *clientconfig.Config, targets []string, dir str
 	}
 	cfg.SetDerived(next)
 
+	// The lineage KBs are pulled here, once, and merged into the pulls the
+	// manifest build reuses. One that fails costs every projection holding it
+	// (its failure is in pre, so cfg keeps the closure that names it and those
+	// providers are skipped), while the stored entry of each seed that names it
+	// is put back as it was: stored state never names a KB nothing could apply.
+	if extra := lineageKBsToPull(cfg, targets, pre); len(extra) > 0 {
+		cs, failed, err := fetchCandidatesPartial(cfg, extra)
+		if err != nil {
+			return nil, widening{}, nil, err
+		}
+		kbs := make(map[string]bool, len(extra))
+		for _, kb := range extra {
+			kbs[kb] = true
+		}
+		pre = pre.merge(&prefetched{cs: cs, failed: failed, kbs: kbs})
+		next.Lineage = restoredLineage(cfg.Derived(), next.Lineage, failed, errw)
+	}
+	widened := diffSnapshots(before, bindingSnapshot(cfg, targets), pre)
+	if len(widened.Added)+len(widened.Removed) > 0 {
+		next.LastChange = widened.record(time.Now())
+	}
+
 	commit := func() error {
 		if dryRun {
 			// The plan names every file the real run writes (D172 WP4).
@@ -112,7 +139,7 @@ func deriveWorkspaceBindings(cfg *clientconfig.Config, targets []string, dir str
 		}
 		return clientconfig.SaveDerived(dir, next)
 	}
-	return pre, commit, nil
+	return pre, widened, commit, nil
 }
 
 // derivationScope returns the targeted providers that derive bindings (in
