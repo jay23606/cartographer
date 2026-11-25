@@ -96,6 +96,9 @@ app.kubernetes.io/managed-by: {{ .root.Release.Service }}
 {{- if and $s.credentials.enabled (not $s.credentials.existingSecret.name) -}}
 {{- fail "meridian.credentials.existingSecret.name is required: the Secret holds audit.key (`openssl rand -hex 32`, Meridian cannot generate it on a read-only mount) and the KBs' key files (default.ssh, known_hosts, <kb>.token); or set meridian.credentials.enabled=false" -}}
 {{- end -}}
+{{- if and (not $s.tls.secretName) (kindIs "map" (get $cfg "tls")) (get (get $cfg "tls") "enabled") -}}
+{{- fail "meridian.config.tls.enabled needs meridian.tls.secretName: the chart's probes and Surveyor URL speak HTTPS only when it is set, so the pod would never become ready; name the Secret holding tls.crt and tls.key" -}}
+{{- end -}}
 {{- if $s.tls.secretName -}}
 {{- $tlsCfg := default (dict) (get $cfg "tls") -}}
 {{- range $k := list "enabled" "health_addr" -}}
