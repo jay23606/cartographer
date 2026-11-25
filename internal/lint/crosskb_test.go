@@ -1,6 +1,7 @@
 package lint
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/BeppeTemp/cartographer/internal/kb"
@@ -119,7 +120,9 @@ func TestSelfNamedCrossKBLink(t *testing.T) {
 	}
 }
 
-// AC-cross-kb-links-15
+// AC-cross-kb-links-15: the shared lint always reports the orphan; a resolved
+// cross edge only names the KBs that would clear it (Finding.ClearedBy), and
+// the caller's rights decide after the cache.
 func TestOrphanCrossKBEdges(t *testing.T) {
 	t.Parallel()
 	a, b := crossPair(t)
@@ -130,38 +133,42 @@ func TestOrphanCrossKBEdges(t *testing.T) {
 	putPage(t, a, "arch/top2", "[[kb:kb-b/ops/x2]]\n")
 	putPage(t, b, "ops/x", "x\n")
 	putPage(t, b, "from", "[[kb:kb-a/target]]\n")
-	orphans := func() map[string]bool {
-		f, err := Run(a, "", false)
-		if err != nil {
-			t.Fatal(err)
-		}
-		out := map[string]bool{}
-		for _, x := range f {
+	clearedBy := func(findings func() []Finding) map[string][]string {
+		out := map[string][]string{}
+		for _, x := range findings() {
 			if x.Check == "orphan" {
-				out[x.Path] = true
+				out[x.Path] = x.ClearedBy
 			}
 		}
 		return out
 	}
-	got := orphans()
-	if got["target.md"] || got["arch/top.md"] {
-		t.Errorf("a cross edge must clear orphan: %v", got)
+	run := func() []Finding {
+		f, err := Run(a, "", false)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return f
 	}
-	if !got["arch/top2.md"] {
-		t.Errorf("an unresolved outgoing link clears nothing: %v", got)
+	want := []string{"kb-b"}
+	got := clearedBy(run)
+	if !reflect.DeepEqual(got["target.md"], want) || !reflect.DeepEqual(got["arch/top.md"], want) {
+		t.Errorf("a cross edge must name its KB in ClearedBy: %v", got)
 	}
-	if sc := ScopedCheck(a, ids("target", "arch/top")); hasCheck(sc, "target.md", "orphan") || hasCheck(sc, "arch/top.md", "orphan") {
+	if _, ok := got["arch/top2.md"]; !ok || got["arch/top2.md"] != nil {
+		t.Errorf("an unresolved outgoing link clears nothing, and the finding stays: %v", got)
+	}
+	sc := clearedBy(func() []Finding { return ScopedCheck(a, ids("target", "arch/top")) })
+	if !reflect.DeepEqual(sc["target.md"], want) || !reflect.DeepEqual(sc["arch/top.md"], want) {
 		t.Errorf("ScopedCheck agrees with Run: %v", sc)
 	}
-	// The B pages go: both are orphans again.
-	// A write made through the server forgets the last validation.
+	// The B pages go: the findings stay, with nothing to clear them.
 	for _, id := range []okf.ConceptID{"from", "ops/x"} {
 		if err := b.WithGitLock(func() error { return b.DeleteConcept(id) }); err != nil {
 			t.Fatal(err)
 		}
 	}
-	got = orphans()
-	if !got["target.md"] || !got["arch/top.md"] {
-		t.Errorf("without the B pages both are orphans: %v", got)
+	got = clearedBy(run)
+	if _, ok := got["target.md"]; !ok || got["target.md"] != nil || got["arch/top.md"] != nil {
+		t.Errorf("without the B pages nothing clears the orphans: %v", got)
 	}
 }

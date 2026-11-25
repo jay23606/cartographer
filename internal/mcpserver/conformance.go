@@ -155,7 +155,7 @@ func (v *callerView) dropCross(findings []lint.Finding) []lint.Finding {
 	out := findings
 	copied := false
 	for i, f := range findings {
-		if len(f.OtherKBs) == 0 || v.crossOK(f) {
+		if !crossNamed(f) || v.crossOK(f) {
 			if copied {
 				out = append(out, f)
 			}

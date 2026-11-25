@@ -10,6 +10,17 @@ import (
 	"github.com/BeppeTemp/cartographer/internal/lint"
 )
 
+// orphanCleared says whether the shared lint reports path as an orphan that
+// the resolved edges of another KB would clear.
+func orphanCleared(fs []lint.Finding, path string) bool {
+	for _, f := range fs {
+		if f.Path == path && f.Check == "orphan" && len(f.ClearedBy) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 func stampHas(fs []lint.Finding, path, check string) bool {
 	for _, f := range fs {
 		if f.Path == path && f.Check == check {
@@ -78,16 +89,16 @@ func TestCrossStampThroughTheCache(t *testing.T) {
 		t.Error("B removed the target: the finding must come back")
 	}
 	// B adds, then removes, a link to A's page t: its orphan goes and returns.
-	if !stampHas(lintOf(), "t.md", "orphan") {
-		t.Fatal("t is an orphan before B links it")
+	if !stampHas(lintOf(), "t.md", "orphan") || orphanCleared(lintOf(), "t.md") {
+		t.Fatal("t is an orphan nothing clears before B links it")
 	}
 	putThroughServer(t, b, "from", "[[kb:kb-a/t]]\n")
-	if stampHas(lintOf(), "t.md", "orphan") {
-		t.Error("B links t: its orphan must go with no change in A")
+	if !orphanCleared(lintOf(), "t.md") {
+		t.Error("B links t: the shared lint must name kb-b as clearing it, with no change in A")
 	}
 	putThroughServer(t, b, "from", "")
-	if !stampHas(lintOf(), "t.md", "orphan") {
-		t.Error("B no longer links t: its orphan must return")
+	if orphanCleared(lintOf(), "t.md") {
+		t.Error("B no longer links t: nothing clears it")
 	}
 	// A KB with no cross link keeps a stamp with no cross part.
 	if s := crossStamp(plain); s != "" {

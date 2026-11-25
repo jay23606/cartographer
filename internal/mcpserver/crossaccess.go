@@ -56,26 +56,39 @@ func crossReadable(ctx context.Context, k *kb.KB, name string) bool {
 // crossFindingVisible is the threshold for a finding about other KBs: visible
 // only when the caller reads every KB it names. A finding that names none
 // follows the page, decided by the caller of this function.
+//
+// An orphan carries ClearedBy instead: the shared lint always reports it, and
+// a caller who reads whole one of the KBs whose resolved edges would clear it
+// is not shown it. A caller who reads none sees it whether or not the page it
+// links, or that links it, exists there: the verdict is no existence oracle.
 func crossFindingVisible(ctx context.Context, k *kb.KB, f lint.Finding) bool {
 	for _, n := range f.OtherKBs {
 		if !crossReadable(ctx, k, n) {
 			return false
 		}
 	}
+	for _, n := range f.ClearedBy {
+		if crossReadable(ctx, k, n) {
+			return false
+		}
+	}
 	return true
 }
+
+// crossNamed says whether a finding's visibility depends on other KBs.
+func crossNamed(f lint.Finding) bool { return len(f.OtherKBs) > 0 || len(f.ClearedBy) > 0 }
 
 // lintFilteredFor drops the findings the caller may not be told of because they
 // name another KB, before anything is counted. The unfiltered call sites of a
 // whole-KB tool (lint, gate_check, the doctor nudge) go through it.
 func lintFilteredFor(ctx context.Context, k *kb.KB, findings []lint.Finding) []lint.Finding {
 	for i, f := range findings {
-		if len(f.OtherKBs) == 0 || crossFindingVisible(ctx, k, f) {
+		if !crossNamed(f) || crossFindingVisible(ctx, k, f) {
 			continue
 		}
 		out := append([]lint.Finding(nil), findings[:i]...)
 		for _, g := range findings[i+1:] {
-			if len(g.OtherKBs) == 0 || crossFindingVisible(ctx, k, g) {
+			if !crossNamed(g) || crossFindingVisible(ctx, k, g) {
 				out = append(out, g)
 			}
 		}

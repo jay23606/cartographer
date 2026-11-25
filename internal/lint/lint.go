@@ -140,6 +140,12 @@ type Finding struct {
 	// It is never serialized: a caller who cannot read all of them is not told
 	// of the finding (internal/mcpserver crossFindingVisible).
 	OtherKBs []string
+	// ClearedBy are the current names of the KBs whose resolved cross-KB edges
+	// (an existing target of an outgoing link, or a page that links here) clear
+	// this orphan. The finding is always emitted, so the shared result does not
+	// tell whether those pages exist; a caller who reads one of them whole is
+	// not shown it (internal/mcpserver crossFindingVisible). Never serialized.
+	ClearedBy []string
 }
 
 // Now is used for date comparison in stale_claim checks. Override in tests.
@@ -543,7 +549,7 @@ func runChecks(k *kb.KB, scope string, scopeNeighbors bool, opts Options) ([]Fin
 		}
 
 		// --- orphan ---
-		if f, ok := orphanFinding(id, relPath, isRetired(id), ledgerEntryOf(lg, id), incomingLinks, graph.Out, archiveSet, func(t okf.ConceptID) bool { _, ok := relPathOf[t]; return ok }, func(t okf.ConceptID) bool { return len(sourceCited[string(t)]) > 0 }, func() bool { return census.only(id, archiveSet) }, func() bool { return crossEdgeIn(k, id) }, func() bool { return crossEdgeOut(k, body) }); ok {
+		if f, ok := orphanFinding(id, relPath, isRetired(id), ledgerEntryOf(lg, id), incomingLinks, graph.Out, archiveSet, func(t okf.ConceptID) bool { _, ok := relPathOf[t]; return ok }, func(t okf.ConceptID) bool { return len(sourceCited[string(t)]) > 0 }, func() bool { return census.only(id, archiveSet) }, func() []string { return crossEdgeIn(k, id) }, func() []string { return crossEdgeOut(k, body) }); ok {
 			emit(f)
 		}
 
@@ -1019,25 +1025,65 @@ func crossLinkFindings(k *kb.KB, relPath, body string, emit func(Finding)) {
 	}
 }
 
-// crossEdgeIn reports whether a page of another mounted KB links id of k.
-func crossEdgeIn(k *kb.KB, id okf.ConceptID) bool {
+// crossEdgeIn lists the current names of the other mounted KBs with a page that
+// links id of k, sorted.
+func crossEdgeIn(k *kb.KB, id okf.ConceptID) []string {
 	refs, err := k.CrossIncoming(id)
-	return err == nil && len(refs) > 0
+	if err != nil {
+		return nil
+	}
+	set := map[string]bool{}
+	for _, r := range refs {
+		set[r.KB] = true
+	}
+	return sortedNames(set)
 }
 
-// crossEdgeOut reports whether body holds a resolved cross-KB link: the target
-// KB is mounted, readable by the server, not this KB, and has the page.
-func crossEdgeOut(k *kb.KB, body string) bool {
-	if k.Mounts() == nil || !strings.Contains(body, "[[kb:") {
-		return false
+// crossEdgeOut lists the other mounted KBs body links with a resolved cross-KB
+// link: the KB is mounted, readable by the server, not this one, and has the
+// page. Sorted.
+func crossEdgeOut(k *kb.KB, body string) []string {
+	m := k.Mounts()
+	if m == nil || !strings.Contains(body, "[[kb:") {
+		return nil
 	}
 	links := kb.ExtractCrossLinks(body)
-	for _, t := range k.CrossTargets(links) {
+	set := map[string]bool{}
+	for i, t := range k.CrossTargets(links) {
 		if t.Mounted && t.Err == nil && t.Exists {
-			return true
+			set[m.Canonical(links[i].KB)] = true
 		}
 	}
-	return false
+	return sortedNames(set)
+}
+
+func sortedNames(set map[string]bool) []string {
+	out := make([]string, 0, len(set))
+	for n := range set {
+		out = append(out, n)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// clearedBy is the sorted union of the KBs whose resolved cross edges would
+// clear an orphan. The finding is emitted either way: the lint is shared by
+// every caller, and whether another KB has the page is told only to a caller
+// who reads that KB (Finding.ClearedBy).
+func clearedBy(edges ...func() []string) []string {
+	set := map[string]bool{}
+	for _, e := range edges {
+		if e == nil {
+			continue
+		}
+		for _, n := range e() {
+			set[n] = true
+		}
+	}
+	if len(set) == 0 {
+		return nil
+	}
+	return sortedNames(set)
 }
 
 // orphanMessage is what a page nothing links to reads: a link INTO the page is
@@ -1051,7 +1097,7 @@ const orphanMessage = "no incoming links: no other page links to it, and its own
 // one of its archive or of the KB: the write that creates a first page cannot
 // link it to anything yet, and the map's index reaches it, so it is not an
 // orphan (D1099); the next page of the archive links as usual.
-func orphanFinding(id okf.ConceptID, relPath string, isRetired, ledgerEntry bool, in, out map[okf.ConceptID]map[okf.ConceptID]struct{}, archiveSet map[string]bool, present func(okf.ConceptID) bool, cited func(okf.ConceptID) bool, loneLive func() bool, crossIn, crossOut func() bool) (Finding, bool) {
+func orphanFinding(id okf.ConceptID, relPath string, isRetired, ledgerEntry bool, in, out map[okf.ConceptID]map[okf.ConceptID]struct{}, archiveSet map[string]bool, present func(okf.ConceptID) bool, cited func(okf.ConceptID) bool, loneLive func() bool, crossIn, crossOut func() []string) (Finding, bool) {
 	// A retired concept is not asked to be linked: link_to_retired and
 	// index_lists_retired push links away from it, so an orphan finding would
 	// contradict them (D826).
@@ -1060,7 +1106,7 @@ func orphanFinding(id okf.ConceptID, relPath string, isRetired, ledgerEntry bool
 	}
 	// A concept another cites in its frontmatter provenance (a Source in the
 	// sources journal) is reached, though no body link says so.
-	if len(in[id]) != 0 || (cited != nil && cited(id)) || (crossIn != nil && crossIn()) {
+	if len(in[id]) != 0 || (cited != nil && cited(id)) {
 		return Finding{}, false
 	}
 	if loneLive != nil && loneLive() {
@@ -1081,12 +1127,10 @@ func orphanFinding(id okf.ConceptID, relPath string, isRetired, ledgerEntry bool
 	switch {
 	case !atArchiveTop:
 		return newFinding("orphan", Finding{
-			Path:    relPath,
-			Message: orphanMessage,
+			Path:      relPath,
+			Message:   orphanMessage,
+			ClearedBy: clearedBy(crossIn),
 		}), true
-	case outgoing == 0 && crossOut != nil && crossOut():
-		// A resolved cross-KB link is an outgoing edge too.
-		return Finding{}, false
 	case outgoing == 0 && ledgerEntry:
 		// A Source registered in its journal is a leaf by nature: it records a
 		// source before any page cites it (D278), and the curated index entry
@@ -1094,8 +1138,9 @@ func orphanFinding(id okf.ConceptID, relPath string, isRetired, ledgerEntry bool
 		return Finding{}, false
 	case outgoing == 0:
 		return newFinding("orphan", Finding{
-			Path:    relPath,
-			Message: "no links in or out: a node connected to nothing in the graph (the map's index is not a link) — link it to the concepts it relates to (link_suggest may propose some by title similarity)",
+			Path:      relPath,
+			Message:   "no links in or out: a node connected to nothing in the graph (the map's index is not a link) — link it to the concepts it relates to (link_suggest may propose some by title similarity)",
+			ClearedBy: clearedBy(crossIn, crossOut),
 		}), true
 	}
 	return Finding{}, false

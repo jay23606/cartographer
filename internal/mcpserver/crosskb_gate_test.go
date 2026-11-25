@@ -150,3 +150,65 @@ func TestCrossKBLeakSurfaces(t *testing.T) {
 		t.Errorf("a reader of kb-b is not told: %s", got)
 	}
 }
+
+// orphanWorld is kb-a with the map arch (two pages, so neither is alone), whose
+// page arch/p links kb-b/x and whose page arch/q is linked from kb-b/from when
+// present: kb-b has the page x, and the page from, or neither.
+func orphanWorld(t *testing.T, present bool) *kb.KB {
+	t.Helper()
+	a, b := kbtest.New(t), kbtest.New(t)
+	a.AuthName, b.AuthName = "kb-a", "kb-b"
+	put := func(k *kb.KB, rel, body string) {
+		p := filepath.Join(k.DataRoot(), filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(a, "arch/_map.md", "---\ntype: Map\ntitle: Arch\nkind: map\n---\n")
+	put(a, "arch/p.md", "---\ntype: Note\n---\n[[kb:kb-b/x]]\n")
+	put(a, "arch/q.md", "---\ntype: Note\n---\nq\n")
+	if present {
+		put(b, "x.md", "---\ntype: Note\n---\nx\n")
+		put(b, "from.md", "---\ntype: Note\n---\n[[kb:kb-a/arch/q]]\n")
+	}
+	m := kb.NewMounts(map[string]*kb.KB{"kb-a": a, "kb-b": b}, []string{"kb-a", "kb-b"}, nil)
+	a.SetMounts(m)
+	b.SetMounts(m)
+	return a
+}
+
+// A caller who cannot read kb-b whole sees the orphan verdict of a page whose
+// only edge crosses to kb-b whether or not that edge resolves: it is no
+// existence oracle. A reader of kb-b has it cleared when the edge resolves.
+func TestOrphanVerdictIsNoExistenceOracle(t *testing.T) {
+	callers := crossCallers()
+	shown := func(who string, present bool, path string) bool {
+		a := orphanWorld(t, present)
+		fs, err := (&conformanceCache{}).lintFindings(a)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range lintFilteredFor(callers[who], a, fs) {
+			if f.Path == path && f.Check == "orphan" {
+				return true
+			}
+		}
+		return false
+	}
+	for _, path := range []string{"arch/p.md", "arch/q.md"} {
+		for _, who := range []string{"a-only", "b-scoped"} {
+			if !shown(who, true, path) || !shown(who, false, path) {
+				t.Errorf("%s / %s: the orphan must show whether or not kb-b has the page", who, path)
+			}
+		}
+		if shown("reads-a-b", true, path) {
+			t.Errorf("reads-a-b / %s: a reader of kb-b has it cleared when the edge resolves", path)
+		}
+		if !shown("reads-a-b", false, path) {
+			t.Errorf("reads-a-b / %s: with no edge the orphan stays", path)
+		}
+	}
+}
