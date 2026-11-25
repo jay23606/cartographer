@@ -1402,7 +1402,10 @@ func workspaceStatuses(cfg *clientconfig.Config, provider, clientBaseDir string)
 
 	out := make([]workspaceStatus, 0, len(bindings))
 	for _, w := range bindings {
-		st := workspaceStatus{Path: w.Path, KBs: w.KBs, State: "ok", Derived: w.Derived, Source: sourcesLabel(w), Bind: bindCommand(provider, w.Path, w)}
+		st := workspaceStatus{Path: w.Path, KBs: w.KBs, State: "ok", Derived: w.Derived, Source: sourcesLabel(w), Bind: bindCommand(provider, w.Path, w), Lineage: w.Lineage}
+		if !w.NoLineage {
+			st.LineageUnresolved = storedUnresolved(cfg, w.OwnKBs())
+		}
 		if info, err := os.Stat(w.Path); err != nil || !info.IsDir() {
 			st.State, st.Detail = "gone", "the bound directory is not there any more"
 			if w.Derived {
@@ -1500,6 +1503,7 @@ func printWorkspaceLines(ws []workspaceStatus) {
 		if w.Detail != "" {
 			fmt.Printf("    %s\n", w.Detail)
 		}
+		printLineageLines(w.Lineage, w.LineageUnresolved)
 	}
 }
 

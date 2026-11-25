@@ -165,6 +165,9 @@ func renderStatus(output string, s statusSnapshot, code int) int {
 		return code
 	}
 	printServerLines(os.Stdout, os.Stderr, s)
+	if line := lastChangeLine(s.LastChange); line != "" {
+		fmt.Println(line)
+	}
 	for _, p := range s.Providers {
 		if p.Skipped != "" {
 			fmt.Printf("[%s] skipped: %s\n", escapeControl(p.Name), escapeControl(p.Skipped))
@@ -376,6 +379,7 @@ func printBindingLine(p providerStatus) {
 		kbs = strings.Join(p.BoundKBs, ", ")
 	}
 	fmt.Printf("  kbs %s (%s)\n", kbs, p.BindingOrigin)
+	printLineageLines(p.Lineage, p.LineageUnresolved)
 	for _, kb := range p.ArtifactsOff {
 		fmt.Printf("  %s artifacts: off (knowledge_bases)\n", kb)
 	}
