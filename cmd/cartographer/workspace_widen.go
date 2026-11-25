@@ -94,6 +94,18 @@ func (w widening) count(via string) (n int) {
 	return n
 }
 
+// countPaths is the number of distinct repositories that gained a binding by
+// via: one repository bound to two KBs counts once.
+func (w widening) countPaths(via string) int {
+	seen := map[string]bool{}
+	for _, it := range w.Added {
+		if it.Via == via {
+			seen[it.Path] = true
+		}
+	}
+	return len(seen)
+}
+
 // record is the LastChange the run stores, capped as the loader requires.
 func (w widening) record(now time.Time) *clientconfig.DerivedChange {
 	c := &clientconfig.DerivedChange{At: now.UTC().Format(time.RFC3339), Added: w.Added, Removed: w.Removed}
@@ -182,7 +194,7 @@ func printSyncWidening(out io.Writer, s syncWidening, dryRun bool) {
 	for _, c := range []struct {
 		n    int
 		what string
-	}{{s.Mounted, "KB(s) mounted"}, {s.Derived, "repository binding(s) derived"}, {s.Lineage, "KB(s) brought by lineage"}} {
+	}{{s.Mounted, "KB(s) mounted"}, {s.Derived, "repository(ies) bound by paths.yaml"}, {s.Lineage, "KB(s) brought by lineage"}} {
 		if c.n > 0 {
 			parts = append(parts, fmt.Sprintf("%d %s", c.n, c.what))
 		}

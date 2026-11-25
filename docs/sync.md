@@ -659,7 +659,7 @@ unchanged.
   Before the apply, `sync` prints `bound by paths.yaml: <kb> in <path>`, `bound by lineage: <kb> (from
   <seed>) in <path>` and `<provider>: <kb> bound by lineage (from <seed>)` (and the `no longer bound
   by ...` forms) for what changed against the previous derived file, under the `[dry-run]` prefix in a
-  dry run; after the apply summary, one `this sync widened what is bound: ...` line (`would widen` in a
+  dry run; after the apply summary, one `this sync widened what is bound: ...` line (its `<n> repository(ies) bound by paths.yaml` counts distinct repositories, not (KB, path) pairs) (`would widen` in a
   dry run) when a count is non-zero. The change is recorded in `last_change` of the derived file; a run
   that changes nothing prints and writes nothing. A relation that changes on the server is applied by
   the next `sync` only (it is outside `revision`), and approvals are untouched: a hook, an executable

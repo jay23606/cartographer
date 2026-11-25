@@ -557,6 +557,39 @@ func TestSyncLineagePullFailureSkipsHolders(t *testing.T) {
 	}
 }
 
+// A lineage KB another provider already pulls as its own seed is covered by
+// the candidates, not by the lineage pull: its failure still puts the stored
+// entry of the seed naming it back.
+func TestSyncLineagePullFailureOfSeedElsewhereKeepsStoredEntry(t *testing.T) {
+	// opencode holds only plain-kb, so the run survives the failed pull and
+	// reaches the commit of the derived state.
+	e, _ := workspaceLineageEnv(t)
+	e.srv.mounted = append(e.srv.mounted, "plain-kb")
+	e.srv.set(func(s *lineageServer) { s.relations["client-kb"] = closureOf(); s.relations["plain-kb"] = closureOf() })
+	e.cfg.KnownKBs = e.srv.mounted
+	e.cfg.Clients["codex"] = clientconfig.ClientBinding{KBs: []string{"core-kb"}, KBsSet: true}
+	e.cfg.Clients["opencode"] = clientconfig.ClientBinding{KBs: []string{"plain-kb"}, KBsSet: true}
+	e.cfg.Agents = append(e.cfg.Agents, "codex", "opencode")
+	if err := clientconfig.Save(e.dir, e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	_, _, err := e.syncOut(t, syncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.srv.set(func(s *lineageServer) {
+		s.relations["client-kb"] = closureOf("core-kb")
+		s.errKB["core-kb"] = true
+	})
+	_, _, err = e.syncOut(t, syncOptions{})
+	if err == nil {
+		t.Fatal("want the failed pull reported")
+	}
+	if got := e.lineage()["client-kb"].Closure; len(got) != 0 {
+		t.Errorf("stored closure = %v, want the previous (none)", got)
+	}
+}
+
 // AC-lineage-17: each KB is pulled once per sync.
 func TestSyncPullsEachKBOnce(t *testing.T) {
 	e, _ := workspaceLineageEnv(t)
@@ -654,7 +687,7 @@ func TestSyncCombinedEffectOneRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"[dry-run] bound by paths.yaml: client-kb in " + repo, "[dry-run] bound by lineage: core-kb (from client-kb) in " + repo, "[dry-run] this sync would widen what is bound: 1 repository binding(s) derived, 2 KB(s) brought by lineage"} {
+	for _, want := range []string{"[dry-run] bound by paths.yaml: client-kb in " + repo, "[dry-run] bound by lineage: core-kb (from client-kb) in " + repo, "[dry-run] this sync would widen what is bound: 1 repository(ies) bound by paths.yaml, 2 KB(s) brought by lineage"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dry run misses %q:\n%s", want, out)
 		}
@@ -666,7 +699,7 @@ func TestSyncCombinedEffectOneRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"bound by paths.yaml: client-kb in " + repo, "bound by lineage: core-kb (from client-kb) in " + repo, "this sync widened what is bound: 1 repository binding(s) derived, 2 KB(s) brought by lineage; review with cartographer status"} {
+	for _, want := range []string{"bound by paths.yaml: client-kb in " + repo, "bound by lineage: core-kb (from client-kb) in " + repo, "this sync widened what is bound: 1 repository(ies) bound by paths.yaml, 2 KB(s) brought by lineage; review with cartographer status"} {
 		if strings.Count(out, want) != 1 {
 			t.Errorf("sync misses %q once:\n%s", want, out)
 		}

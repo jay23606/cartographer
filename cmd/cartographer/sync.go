@@ -614,7 +614,7 @@ func runSync(dir string, cfg *clientconfig.Config, opts syncOptions) (syncResult
 		return syncResult{}, err
 	}
 	printApplySummary(out, dir, results, opts.DryRun, mcpNotReceivedReasons(projections, manifests, approvals, dir))
-	printSyncWidening(out, syncWidening{Derived: widened.count(clientconfig.LastChangeViaPaths), Lineage: widened.count(clientconfig.LastChangeViaLineage)}, opts.DryRun)
+	printSyncWidening(out, syncWidening{Derived: widened.countPaths(clientconfig.LastChangeViaPaths), Lineage: widened.count(clientconfig.LastChangeViaLineage)}, opts.DryRun)
 	// What the server left out of its catalogue (#1775): once per run, not once
 	// per provider.
 	for _, is := range manifestIssues(manifests) {
