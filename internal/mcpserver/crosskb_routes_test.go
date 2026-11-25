@@ -91,6 +91,18 @@ func TestCrossRoutes(t *testing.T) {
 		t.Error("edges is null")
 	}
 
+	// A page of kb-b linking a page kb-a does not hold draws no edge from it, in
+	// the route or in graph_neighbors.
+	putThroughServer(t, r.b, "ops/orphan-link", "[[kb:kb-a/nowhere]]\n")
+	for _, e := range rowsOf(external("admin", ""), "edges") {
+		if e["from"] == "nowhere" {
+			t.Errorf("edge from a page kb-a does not hold: %v", e)
+		}
+	}
+	if text, isErr := callJSON(t, s, crossCallers()["admin"], "graph_neighbors", `{"id":"nowhere","direction":"in"}`); !isErr {
+		t.Errorf("graph_neighbors answered for a page only another KB links: %s", text)
+	}
+
 	// Never served from the UI body cache: a change of kb-b shows at once, though
 	// kb-a's generation did not move.
 	multi := NewMultiKBServer("test")

@@ -55,9 +55,11 @@ func uiGraphExternal(w http.ResponseWriter, r *http.Request, k *kb.KB) {
 			}
 		}
 	}
-	if refs, err := k.CrossIncomingAll(); err == nil {
+	// A backlink to a page this KB does not hold has no node to start from.
+	graph, gerr := k.Links()
+	if refs, err := k.CrossIncomingAll(); err == nil && gerr == nil {
 		for _, ref := range refs {
-			if !inScope(string(ref.Target)) {
+			if _, there := graph.Exists[ref.Target]; !there || !inScope(string(ref.Target)) {
 				continue
 			}
 			if e, ok := crossInEdge(ctx, k, kb.CrossRef{KB: ref.KB, ID: ref.ID}); ok {
