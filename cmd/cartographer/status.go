@@ -27,8 +27,9 @@ var (
 	statusHealthFn = func(cfg *clientconfig.Config) (*client.Health, error) {
 		return client.New(cfg.ServerURL, resolveToken(cfg)).WithInsecureHTTP(cfg.InsecureHTTPAllowed()).Health(statusHealthTimeout)
 	}
-	// statusManifestsFn builds the per-projection manifests sync applies (D193).
-	statusManifestsFn = manifestsForProjections
+	// statusManifestsFn builds the per-projection manifests sync applies (D193),
+	// with the `relations` of the same pulls.
+	statusManifestsFn = manifestsWithRelations
 	statusServiceFn   = func() (service.Status, error) { return service.NewManager().Status("") }
 )
 

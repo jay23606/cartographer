@@ -593,8 +593,9 @@ func snapshotForConfig(dir string, cfg *clientconfig.Config, includeService bool
 		allProjs = append(allProjs, ps...)
 	}
 	var manifests map[string]contract.Manifest
+	var rels map[string]contract.Relations
 	if len(allProjs) > 0 || len(connectedProviders) == 0 {
-		manifests, err = statusManifestsFn(cfg, allProjs)
+		manifests, rels, err = statusManifestsFn(cfg, allProjs)
 	}
 	if err != nil {
 		s.State = "unavailable"
@@ -627,10 +628,6 @@ func snapshotForConfig(dir string, cfg *clientconfig.Config, includeService bool
 		s.State = "error"
 		s.Error = &statusError{Code: "lockfile_failed", Message: "could not read local sync state", Cause: err.Error()}
 		return s
-	}
-	var rels map[string]contract.Relations
-	if seeds := lineageDriftSeeds(cfg, connectedProviders); len(seeds) > 0 {
-		rels = statusRelationsFn(cfg, seeds)
 	}
 	for i := range s.Providers {
 		if !s.Providers[i].Connected {

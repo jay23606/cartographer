@@ -121,7 +121,7 @@ func TestStatusLineageDrift(t *testing.T) {
 	e.srv.set(func(s *lineageServer) { s.relations["client-kb"] = closureOf("core-kb", "extra-kb") })
 	snap, text, _ := statusOf(t, e)
 	p := claudeStatus(t, snap)
-	if p.State != "drift" || !strings.Contains(strings.Join(p.DriftReason, "\n"), "lineage changed (extra-kb would be bound in ") || !strings.Contains(text, "run cartographer sync") {
+	if p.State != "drift" || !strings.Contains(strings.Join(p.DriftReason, "\n"), "lineage changed (extra-kb would be bound in ") || !strings.Contains(text, "run `cartographer sync`") {
 		t.Errorf("no drift for a relation that appeared: state %q reasons %v", p.State, p.DriftReason)
 	}
 	e.srv.set(func(s *lineageServer) { s.relations["client-kb"] = closureOf() })
@@ -183,4 +183,75 @@ func derivedFile(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return p
+}
+
+// A status snapshot pulls each KB once: the drift check reads the `relations`
+// of the pulls that built the manifests, it makes none of its own.
+func TestStatusPullsEachKBOnce(t *testing.T) {
+	e, _ := workspaceLineageEnv(t)
+	if _, _, err := e.syncOut(t, syncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	e.srv.set(func(s *lineageServer) { s.pulls = map[string]int{} })
+	statusOf(t, e)
+	e.srv.set(func(s *lineageServer) {
+		if len(s.pulls) == 0 {
+			t.Error("status pulled nothing")
+		}
+		for kb, n := range s.pulls {
+			if n != 1 {
+				t.Errorf("status pulled %q %d times, want once", kb, n)
+			}
+		}
+	})
+}
+
+// The drift text names the fix once, in the status line, not in the reason.
+func TestStatusLineageDriftNamesFixOnce(t *testing.T) {
+	e, _ := workspaceLineageEnv(t)
+	e.srv.set(func(s *lineageServer) {
+		s.mounted = append(s.mounted, "extra-kb")
+		s.relations["extra-kb"] = closureOf()
+	})
+	if _, _, err := e.syncOut(t, syncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	e.srv.set(func(s *lineageServer) { s.relations["client-kb"] = closureOf("core-kb", "extra-kb") })
+	snap, text, _ := statusOf(t, e)
+	if r := strings.Join(claudeStatus(t, snap).DriftReason, "\n"); strings.Contains(r, "cartographer sync") {
+		t.Errorf("the reason names the fix: %q", r)
+	}
+	for _, l := range strings.Split(text, "\n") {
+		if n := strings.Count(l, "cartographer sync"); n > 1 {
+			t.Errorf("the fix is named %d times in one line, want once: %s", n, l)
+		}
+	}
+}
+
+// One seed without an answer is unknown; the drift of the others is still
+// reported. A derived binding (paths.yaml) is compared like a hand-made one.
+func TestLineageDriftPerSeedAndDerivedBinding(t *testing.T) {
+	e, repo := workspaceLineageEnv(t)
+	e.srv.set(func(s *lineageServer) {
+		s.mounted = append(s.mounted, "extra-kb", "other-kb")
+		s.relations["extra-kb"] = closureOf()
+	})
+	if _, _, err := e.syncOut(t, syncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := clientconfig.Load(e.dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.Derived().Bindings["claude"]) == 0 {
+		t.Fatal("no derived binding after sync")
+	}
+	// Only client-kb is in rels: the seeds not pulled are unknown, the others are checked.
+	cfg.KnownKBs = append(cfg.KnownKBs, "extra-kb")
+	rels := map[string]contract.Relations{"client-kb": *closureOf("core-kb", "extra-kb")}
+	got := strings.Join(lineageDrift(cfg, "claude", rels), "\n")
+	canon, _ := clientconfig.CanonicalWorkspacePath(repo)
+	if !strings.Contains(got, "extra-kb would be bound in "+canon) {
+		t.Errorf("no drift on the derived binding of %s:\n%s", canon, got)
+	}
 }

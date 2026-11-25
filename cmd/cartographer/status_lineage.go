@@ -12,16 +12,6 @@ import (
 	"github.com/BeppeTemp/cartographer/internal/provisioning/contract"
 )
 
-// statusRelationsFn pulls the seeds' `relations` as `status` compares them with
-// the stored lineage. A pull error is "unknown", never a difference.
-var statusRelationsFn = func(cfg *clientconfig.Config, seeds []string) map[string]contract.Relations {
-	cs, err := fetchCandidates(cfg, seeds)
-	if err != nil {
-		return nil
-	}
-	return cs.Relations
-}
-
 // lineageUnresolvedStatus is one relation `status` reports as not followed:
 // the seed KB that declares it, the name as written and the server's reason.
 type lineageUnresolvedStatus struct {
@@ -126,17 +116,6 @@ func lineageSeedPlaces(cfg *clientconfig.Config, provider string) map[string][]l
 	return out
 }
 
-// lineageDriftSeeds is every seed KB a connected provider binds by hand.
-func lineageDriftSeeds(cfg *clientconfig.Config, providers []string) []string {
-	set := map[string]bool{}
-	for _, p := range providers {
-		for seed := range lineageSeedPlaces(cfg, p) {
-			set[seed] = true
-		}
-	}
-	return slices.Sorted(maps.Keys(set))
-}
-
 // lineageDrift compares the closures the status pull saw (rels) with the stored
 // ones, only for a seed whose pull carried `relations`; a seed not pulled is
 // not compared. Each difference is a reason sync would act on.
@@ -152,12 +131,12 @@ func lineageDrift(cfg *clientconfig.Config, provider string, rels map[string]con
 		for _, pl := range places[seed] {
 			for _, k := range fresh {
 				if !slices.Contains(pl.have, k) && !slices.Contains(pl.exclude, k) {
-					out = append(out, fmt.Sprintf("lineage changed (%s would be bound in %s): run cartographer sync", escapeControl(k), escapeControl(pl.where)))
+					out = append(out, fmt.Sprintf("lineage changed (%s would be bound in %s)", escapeControl(k), escapeControl(pl.where)))
 				}
 			}
 			for _, k := range pl.stored {
 				if !slices.Contains(fresh, k) && slices.Contains(pl.have, k) && !slices.Contains(pl.own, k) {
-					out = append(out, fmt.Sprintf("lineage changed (%s would be unbound in %s): run cartographer sync", escapeControl(k), escapeControl(pl.where)))
+					out = append(out, fmt.Sprintf("lineage changed (%s would be unbound in %s)", escapeControl(k), escapeControl(pl.where)))
 				}
 			}
 		}
