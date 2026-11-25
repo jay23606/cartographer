@@ -38,6 +38,8 @@
 {"q": "how do bearer tokens and per-KB scopes work?", "want": ["internals-contributing/transport-auth/per-kb-scopes", "internals-contributing/transport-auth/enabling-bearer-authentication"]}
 {"q": "what are the transports of the MCP server, stdio and HTTP?", "want": ["internals-contributing/transport-auth/transports", "internals-contributing/transport-auth/transports-one-routed-topology-d288"]}
 {"q": "what is the operating loop to orient, read and write?", "want": ["internals-contributing/loop/orient-and-read", "internals-contributing/loop/write"]}
+{"q": "how does a page link a page of another mounted KB?", "want": ["internals-contributing/cross-kb-links", "internals-contributing/cross-kb-links/syntax-extraction-and-storage"]}
+{"q": "when is a link to another KB a broken_cross_kb_link finding?", "want": ["internals-contributing/cross-kb-links", "internals-contributing/cross-kb-links/the-check-and-what-clears-orphan"]}
 {"q": "why should an agent record unknowns as gaps?", "want": ["internals-contributing/loop/record-unknowns-as-gaps"]}
 {"q": "is Cartographer conformant with OKF?", "want": ["internals-contributing/interoperability/okf-conformance"]}
 {"q": "how does Cartographer handle provider behavior of each agent client?", "want": ["internals-contributing/interoperability/provider-behavior", "internals-contributing/interoperability/multi-provider-configurator"]}
@@ -76,5 +78,3 @@
 {"q": "why do paths in a KB use placeholders instead of absolute paths?", "want": ["decisions/d75-path-portability-across-machines-placeholders-auto", "decisions/d263-a-kb-declares-its-path-placeholder-registry"]}
 {"q": "how does a KB find the sibling KBs mounted on the same server?", "want": ["internals-contributing/cross-kb-links"]}
 {"q": "does a mounted name beat a kb_aliases alias when a KB looks up a sibling?", "want": ["internals-contributing/cross-kb-links"]}
-{"q": "how does a page link a page of another mounted KB?", "want": ["internals-contributing/cross-kb-links", "internals-contributing/cross-kb-links/syntax-extraction-and-storage"]}
-{"q": "when is a link to another KB a broken_cross_kb_link finding?", "want": ["internals-contributing/cross-kb-links", "internals-contributing/cross-kb-links/the-check-and-what-clears-orphan"]}
