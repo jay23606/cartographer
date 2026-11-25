@@ -282,6 +282,15 @@ func loadSurveyorPlugins(cfg *surveyor.Config) error {
 	return cfg.LoadPlugins(core.Options{RunningVersion: version, CheckScripts: star.Check})
 }
 
+// applySurveyorCA registers ca_file for the server_url host only: the model,
+// connector and fetch hosts keep the system roots (client.SetServerCA).
+func applySurveyorCA(cfg *surveyor.Config) error {
+	if err := client.SetServerCA(cfg.CAFile, cfg.ServerURL); err != nil {
+		return fmt.Errorf("ca_file: %w", err)
+	}
+	return nil
+}
+
 // surveyorStartup runs the start-up checks in order; each failure starts nothing.
 // The token and the API keys never reach an error or a log line: they are only
 // handed to the clients.
@@ -312,6 +321,9 @@ func surveyorStartup(ctx context.Context, path string, kinds *surveyor.Kinds, re
 		models[p.Name] = m
 	}
 
+	if err := applySurveyorCA(cfg); err != nil {
+		return nil, startFail(surveyorExitStart, "surveyor config %s: %v", path, err)
+	}
 	c := client.New(cfg.ServerURL, cfg.Token()).WithInsecureHTTP(cfg.AllowInsecureHTTP).WithTokenEnv(cfg.TokenEnv)
 	h, err := healthWithRetry(ctx, c, retry)
 	if err != nil {
