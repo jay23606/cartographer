@@ -37,6 +37,13 @@ type lineageServer struct {
 	hookKB string
 	// agents: every KB's pull also carries an agent named agent-<kb>.
 	agents bool
+	// directives: every KB's instructions also declare a directive whose value
+	// is the KB's name, so two KBs collide on it.
+	directives bool
+	// skillText: per KB, text its skill's SKILL.md carries.
+	skillText map[string]string
+	// issues: per KB, what its pull says it left out.
+	issues map[string][]string
 	// skillName: every KB's pull serves its skill under this name, so two KBs collide.
 	skillName string
 }
@@ -79,8 +86,20 @@ func newLineageServer(t *testing.T, mounted ...string) *lineageServer {
 				skill = s.skillName
 			}
 			_ = json.Unmarshal([]byte(syncPullPayload(t, kb, skill)), &m)
+			if txt := s.skillText[kb]; txt != "" {
+				files := []contract.ArtifactFile{{Path: "SKILL.md", Content: []byte("# " + skill + "\n" + txt)}}
+				m["artifacts"] = []any{map[string]any{"kind": "skill", "name": skill, "source": "kb:" + kb,
+					"content_hash": provisioning.ContentHashFiles(files),
+					"files":        []map[string]any{{"path": "SKILL.md", "content_b64": base64.StdEncoding.EncodeToString(files[0].Content)}}}}
+			}
+			if is := s.issues[kb]; is != nil {
+				m["issues"] = is
+			}
 			if s.instructions {
 				body := []byte("# section of " + kb + "\n")
+				if s.directives {
+					body = append(body, []byte("<!-- cartographer:directive:language:"+kb+" -->\n")...)
+				}
 				files := []contract.ArtifactFile{{Path: "instructions.md", Content: body}}
 				arts, _ := m["artifacts"].([]any)
 				m["artifacts"] = append(arts, map[string]any{"kind": "instructions", "name": kb, "source": "kb:" + kb,
@@ -871,7 +890,8 @@ func TestLineageCollisionMessage(t *testing.T) {
 		if err != nil {
 			all += err.Error()
 		}
-		for _, want := range []string{"claimed by", "core-kb comes by lineage from client-kb; opt out with: ", "--exclude core-kb"} {
+		cmd := map[string]string{"workspace": "cartographer workspace bind claude ", "provider": "cartographer client bind claude client-kb --exclude core-kb"}[scope]
+		for _, want := range []string{"claimed by", "core-kb comes by lineage from client-kb; opt out with: " + cmd, "--exclude core-kb"} {
 			if !strings.Contains(all, want) {
 				t.Errorf("%s: output misses %q:\n%s", scope, want, all)
 			}
@@ -911,5 +931,55 @@ func TestTrackedBlockEnvironmentLeavesOutLineageKBs(t *testing.T) {
 		if _, err := os.Stat(filepath.Join(repo, ".claude", "agents", "agent-core-kb.md")); err != nil {
 			t.Errorf("tracked=%v: the lineage agent is not installed: %v", tracked, err)
 		}
+	}
+}
+
+// A directive collision with a lineage KB (untracked destination, both
+// instructions declare the key) ends with the lineage hint like a name does.
+func TestLineageDirectiveCollisionHint(t *testing.T) {
+	e, _ := trackedLineageEnv(t)
+	e.srv.set(func(s *lineageServer) {
+		s.directives = true
+		s.relations["client-kb"] = closureOf("core-kb")
+	})
+	stdout, stderr, err := e.syncOut(t, syncOptions{})
+	if err == nil {
+		t.Fatalf("no collision:\n%s%s", stdout, stderr)
+	}
+	all := stdout + stderr + err.Error()
+	for _, want := range []string{"directive key", "core-kb comes by lineage from client-kb; opt out with: cartographer workspace bind claude "} {
+		if !strings.Contains(all, want) {
+			t.Errorf("output misses %q:\n%s", want, all)
+		}
+	}
+}
+
+// A lineage KB's skill is expanded with the KB's own declared default, and its
+// pull issues are reported, though its instructions stay out of a tracked file.
+func TestTrackedDestinationKeepsLineageRegistryAndIssues(t *testing.T) {
+	e, repo := trackedLineageEnv(t, "CLAUDE.md")
+	home, _ := os.UserHomeDir()
+	if err := os.MkdirAll(filepath.Join(home, "lin-dir"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	e.srv.set(func(s *lineageServer) {
+		s.relations["client-kb"] = closureOf("core-kb")
+		s.registry["core-kb"] = map[string]any{"paths": map[string]any{"lin": map[string]any{"description": "d", "default": "~/lin-dir"}}}
+		s.skillText = map[string]string{"core-kb": "see {{path:lin}}\n"}
+		s.issues = map[string][]string{"core-kb": {"an artifact of core-kb was left out"}}
+	})
+	stdout, stderr, err := e.syncOut(t, syncOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := readFileT(t, filepath.Join(repo, ".claude", "skills", "skill-core-kb", "SKILL.md"))
+	if !strings.Contains(got, filepath.Join(home, "lin-dir")) || strings.Contains(got, "{{path:lin}}") {
+		t.Errorf("the lineage skill was not expanded with its KB's default:\n%s", got)
+	}
+	if !strings.Contains(stdout+stderr, "an artifact of core-kb was left out") {
+		t.Errorf("the lineage KB's pull issue is silent:\n%s%s", stdout, stderr)
+	}
+	if strings.Contains(readFileT(t, filepath.Join(repo, "CLAUDE.md")), home) {
+		t.Error("the tracked block names a path of this machine")
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1209,8 +1210,12 @@ func buildProjectionManifests(st syncStreams, cfg *clientconfig.Config, projecti
 		arts, pi := cs.forProjection(cfg, p), p
 		if lineageInstructionsWithheld(p) {
 			// A KB that is not hand-bound never adds to a block git tracks:
-			// its instructions, and what only the block reads, are left out,
-			// while its skills, agents, hooks and MCP scope stay.
+			// its instructions and its feedback mode are left out, while its
+			// skills, agents, hooks and MCP scope stay. Its path registries,
+			// placeholders and issues are read from the whole projection p:
+			// its artifacts are expanded with them and its pull issues are
+			// the operator's to see; the block's "Local paths" table is
+			// emptied by WithholdLocalPaths.
 			arts = withoutInstructionsOf(arts, p.lineageKBs())
 			pi.KBs = slices.DeleteFunc(slices.Clone(p.KBs), func(k string) bool { return slices.Contains(p.lineageKBs(), k) })
 		}
@@ -1224,10 +1229,10 @@ func buildProjectionManifests(st syncStreams, cfg *clientconfig.Config, projecti
 		}
 		verified = withoutCLISkill(p.Provider, withoutOptedOutSkillsLines(cfg, verified))
 		// Set after verification, which copies only the signed catalogue.
-		verified.Placeholders = cs.placeholdersForProjection(cfg, pi)
-		verified.PathRegistries = cs.pathRegistriesForProjection(cfg, pi)
+		verified.Placeholders = cs.placeholdersForProjection(cfg, p)
+		verified.PathRegistries = cs.pathRegistriesForProjection(cfg, p)
 		verified.FeedbackMode = cs.feedbackForProjection(cfg, pi)
-		verified.KBIssues, verified.ReadKBs = cs.issuesForProjection(cfg, pi)
+		verified.KBIssues, verified.ReadKBs = cs.issuesForProjection(cfg, p)
 		out[projectionKey(p)] = verified
 	}
 	return out, failed, cs.Relations, nil
@@ -1279,7 +1284,7 @@ func workspaceLineageHints(provider string, w clientconfig.WorkspaceBinding) map
 			if out == nil {
 				out = map[string]string{}
 			}
-			out[k] = lineageHint(k, seeds, strings.TrimPrefix(bindCommand(provider, w.Path, opt), "cartographer "))
+			out[k] = lineageHint(k, seeds, bindCommand(provider, w.Path, opt))
 		}
 	}
 	return out
@@ -1288,13 +1293,17 @@ func workspaceLineageHints(provider string, w clientconfig.WorkspaceBinding) map
 // providerLineageHints is the same for a provider-scope binding.
 func providerLineageHints(cfg *clientconfig.Config, provider string) map[string]string {
 	var out map[string]string
-	own, _ := cfg.BoundOwnKBs(provider)
 	for k, seeds := range providerLineage(cfg, provider) {
 		if out == nil {
 			out = map[string]string{}
 		}
-		ex := dedupe(append(slices.Clone(cfg.Clients[provider].Exclude), k))
-		out[k] = lineageHint(k, seeds, "client bind "+provider+" "+strings.Join(own, ",")+" --exclude "+strings.Join(ex, ","))
+		opt := *cfg
+		opt.Clients = maps.Clone(cfg.Clients)
+		b := opt.Clients[provider]
+		b.NoLineage = false
+		b.Exclude = dedupe(append(slices.Clone(b.Exclude), k))
+		opt.Clients[provider] = b
+		out[k] = lineageHint(k, seeds, providerBindCommand(&opt, provider))
 	}
 	return out
 }
@@ -1309,11 +1318,12 @@ func lineageCollisionHint(p syncProjection, err error) string {
 	}
 	var lines []string
 	for _, k := range p.lineageKBs() {
-		for _, c := range ce.Collisions {
-			if slices.Contains(c.Sources, "kb:"+k) {
-				lines = append(lines, p.LineageHints[k])
-				break
-			}
+		src := "kb:" + k
+		if slices.ContainsFunc(ce.Collisions, func(c provisioning.Collision) bool { return slices.Contains(c.Sources, src) }) ||
+			slices.ContainsFunc(ce.Directives, func(d provisioning.DirectiveCollision) bool {
+				return slices.ContainsFunc(d.Values, func(v provisioning.DirectiveValue) bool { return v.Source == src })
+			}) {
+			lines = append(lines, p.LineageHints[k])
 		}
 	}
 	if len(lines) == 0 {
