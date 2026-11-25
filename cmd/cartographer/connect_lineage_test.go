@@ -49,3 +49,36 @@ func TestConnectKBOptOutFlags(t *testing.T) {
 		}
 	}
 }
+
+// connect --workspace puts the lineage options on the workspace binding, not
+// on the provider's.
+func TestConnectWorkspaceCarriesLineageOptions(t *testing.T) {
+	setHome(t, t.TempDir())
+	dir := t.TempDir()
+	seedAgentState(t, dir)
+	ws := t.TempDir()
+	opts := connectOptions{Providers: []string{"claude"}, Dir: dir, ServerURL: "http://127.0.0.1:1/mcp", Name: "cartographer", KBs: []string{"client-kb"}, Workspace: ws, Exclude: []string{"core-kb"}}
+	if _, err := doConnect(opts); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := clientconfig.Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b := cfg.Clients["claude"]; len(b.Exclude) != 0 || b.NoLineage {
+		t.Errorf("the provider binding got the options: %+v", b)
+	}
+	canonical, _ := clientconfig.CanonicalWorkspacePath(ws)
+	found := false
+	for _, w := range cfg.WorkspaceBindings("claude") {
+		if w.Path == canonical {
+			found = true
+			if !slices.Equal(w.Exclude, []string{"core-kb"}) {
+				t.Errorf("workspace binding = %+v", w)
+			}
+		}
+	}
+	if !found {
+		t.Fatal("no workspace binding")
+	}
+}

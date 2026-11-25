@@ -1172,7 +1172,8 @@ func doConnectLocked(opts connectOptions) (connectResult, error) {
 					return connectResult{}, err
 				}
 			}
-			if opts.NoLineage || len(opts.Exclude) > 0 {
+			// With --workspace the options belong to the workspace binding below.
+			if opts.Workspace == "" && (opts.NoLineage || len(opts.Exclude) > 0) {
 				if err := existing.SetProviderLineage(provider, opts.NoLineage, opts.Exclude); err != nil {
 					return connectResult{}, err
 				}
@@ -1190,7 +1191,7 @@ func doConnectLocked(opts connectOptions) (connectResult, error) {
 				return connectResult{}, fmt.Errorf("%s cannot be scoped to a workspace: %s; drop %s from --agents to connect the others to the workspace, and connect %s on its own without --workspace",
 					provider, provisioning.ProjectScopeUnsupportedReason(p), provider, provider)
 			}
-			if err := existing.BindWorkspace(provider, opts.Workspace, selected); err != nil {
+			if err := existing.BindWorkspaceWith(provider, opts.Workspace, selected, clientconfig.BindOptions{NoLineage: opts.NoLineage, Exclude: opts.Exclude}); err != nil {
 				return connectResult{}, err
 			}
 			switched := existing.WorkspaceScope(provider) != clientconfig.ScopeWorkspace
