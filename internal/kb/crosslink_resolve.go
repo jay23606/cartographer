@@ -179,6 +179,23 @@ func (kb *KB) CrossIncoming(id okf.ConceptID) ([]CrossRef, error) {
 	return out, nil
 }
 
+// CrossInboundKBs lists, sorted, the current names of the other mounted KBs
+// with a page that links to this one (by its name or an alias). The error says
+// a KB could not be read: the list is then unknown.
+func (kb *KB) CrossInboundKBs() ([]string, error) {
+	ins, _, err := kb.inbounds("")
+	if err != nil {
+		return nil, err
+	}
+	var out []string
+	for _, in := range ins {
+		if len(out) == 0 || out[len(out)-1] != in.kb {
+			out = append(out, in.kb)
+		}
+	}
+	return out, nil
+}
+
 // crossDigestMemo remembers the digest for the vector of the other KBs'
 // graph generations it was computed on.
 type crossDigestMemo struct {

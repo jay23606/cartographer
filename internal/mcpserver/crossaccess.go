@@ -140,20 +140,31 @@ func bindHint(ctx context.Context, canonical string) string {
 }
 
 // crossNamedKBs are the KBs a cached whole-KB body of k depends on for the
-// caller's rights: here the cross-linked ones. An error gives the empty list
-// (A's own graph failing fails the request that follows); it never has a
-// fingerprint value of its own.
+// caller's rights: the ones k links out to and the ones with a page linking in
+// (an orphan's ClearedBy names both). Sorted, without duplicates. An error of
+// either part leaves the names the other gave (A's own graph failing fails the
+// request that follows); it never has a fingerprint value of its own.
 func crossNamedKBs(k *kb.KB) []string {
-	names, err := k.CrossLinkedKBs()
-	if err != nil {
+	out, _ := k.CrossLinkedKBs()
+	in, _ := k.CrossInboundKBs()
+	set := map[string]bool{}
+	for _, n := range append(out, in...) {
+		set[n] = true
+	}
+	if len(set) == 0 {
 		return nil
 	}
+	names := make([]string, 0, len(set))
+	for n := range set {
+		names = append(names, n)
+	}
+	sort.Strings(names)
 	return names
 }
 
-// crossFingerprint extends the whole-KB cache key with the linked KBs the
-// caller reads, so two callers with different rights never share a body whose
-// counts depend on them. A KB with no cross link keeps the plain key.
+// crossFingerprint extends the whole-KB cache key with the linked KBs (out and
+// in) the caller reads, so two callers with different rights never share a body whose
+// counts depend on them. A KB with no cross link, in or out, keeps the plain key.
 func crossFingerprint(ctx context.Context, k *kb.KB) string {
 	named := crossNamedKBs(k)
 	if len(named) == 0 {

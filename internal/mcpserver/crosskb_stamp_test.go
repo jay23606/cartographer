@@ -1,8 +1,13 @@
 package mcpserver
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/BeppeTemp/cartographer/internal/kb"
@@ -127,4 +132,66 @@ func TestCrossStampIsCheap(t *testing.T) {
 	if got := kb.CrossDigestBuilds() - before; got != 0 {
 		t.Errorf("1000 stamps with nothing changed rebuilt the inbound digest %d times", got)
 	}
+}
+
+// A KB that only receives a cross link (B links A, A links nothing out) keeps a
+// whole-KB cached body per set of rights on B: the orphan count of A depends on
+// whether the caller reads B. Both warm orders give each caller its own answer.
+func TestOverviewCacheKeyAccountsForInboundCrossRights(t *testing.T) {
+	callers := crossCallers()
+	var orphansOf = func(ctx context.Context, a *kb.KB) int {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/overview", nil).WithContext(ctx)
+		serveUICached(rec, req, a, "overview", true, uiWholeStamp, func(w http.ResponseWriter, r *http.Request) {
+			fs, err := (&conformanceCache{}).lintFindings(a)
+			if err != nil {
+				t.Fatal(err)
+			}
+			n := len(lintFilteredFor(r.Context(), a, fs))
+			_, _ = w.Write([]byte(strconv.Itoa(n)))
+		})
+		n, err := strconv.Atoi(strings.TrimSpace(rec.Body.String()))
+		if err != nil {
+			t.Fatalf("body %q: %v", rec.Body.String(), err)
+		}
+		return n
+	}
+	for _, order := range [][]string{{"reads-a-b", "a-only"}, {"a-only", "reads-a-b"}} {
+		a := inboundWorld(t)
+		counts := map[string]int{}
+		for _, who := range order {
+			counts[who] = orphansOf(callers[who], a)
+		}
+		if counts["reads-a-b"] >= counts["a-only"] {
+			t.Errorf("order %v: the reader of kb-b must see fewer orphans than the caller who cannot, got %v", order, counts)
+		}
+	}
+	if fp := crossFingerprint(callers["admin"], inboundWorld(t)); fp == "" {
+		t.Error("a KB with only an inbound cross link must not keep the plain key")
+	}
+}
+
+// inboundWorld is kb-a with two archive pages and no link out, and kb-b with a
+// page linking arch/q.
+func inboundWorld(t *testing.T) *kb.KB {
+	t.Helper()
+	a, b := kbtest.New(t), kbtest.New(t)
+	a.AuthName, b.AuthName = "kb-a", "kb-b"
+	put := func(k *kb.KB, rel, body string) {
+		p := filepath.Join(k.DataRoot(), filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	put(a, "arch/_map.md", "---\ntype: Map\ntitle: Arch\nkind: map\n---\n")
+	put(a, "arch/q.md", "---\ntype: Note\n---\nq\n")
+	put(a, "arch/r.md", "---\ntype: Note\n---\nr\n")
+	put(b, "from.md", "---\ntype: Note\n---\n[[kb:kb-a/arch/q]]\n")
+	m := kb.NewMounts(map[string]*kb.KB{"kb-a": a, "kb-b": b}, []string{"kb-a", "kb-b"}, nil)
+	a.SetMounts(m)
+	b.SetMounts(m)
+	return a
 }
