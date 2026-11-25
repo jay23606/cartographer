@@ -122,10 +122,12 @@ func (kb *KB) CrossLinkedKBsWithin(maxAge time.Duration) ([]string, error) {
 // without duplicates. It reads one KB's snapshot at a time, each under that
 // KB's own leaf graph mutex, never two together and never a git lock. A KB
 // whose snapshot cannot be read is left out: unknown, never an error here.
-func (kb *KB) CrossLinkedFrom() []string { return kb.CrossLinkedFromWithin(0) }
+func (kb *KB) CrossLinkedFrom() []string { return kb.CrossLinkedFromWithin(0, nil) }
 
 // CrossLinkedFromWithin is CrossLinkedFrom for a poller (see CrossLinkedKBsWithin).
-func (kb *KB) CrossLinkedFromWithin(maxAge time.Duration) []string {
+// A non-nil keep is asked first, by mount name: a KB it rejects is never read,
+// so its view is neither revalidated nor locked on behalf of the caller.
+func (kb *KB) CrossLinkedFromWithin(maxAge time.Duration, keep func(name string) bool) []string {
 	m, self := kb.Mounts(), kb.MountName()
 	if m == nil || self == "" {
 		return nil
@@ -133,7 +135,7 @@ func (kb *KB) CrossLinkedFromWithin(maxAge time.Duration) []string {
 	var out []string
 	for _, name := range m.Names() {
 		x, ok := m.Lookup(name)
-		if !ok || x == kb {
+		if !ok || x == kb || (keep != nil && !keep(name)) {
 			continue
 		}
 		linked, err := x.CrossLinkedKBsWithin(maxAge)

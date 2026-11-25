@@ -98,3 +98,24 @@ func TestRevisionBlindToUnreadableKB(t *testing.T) {
 		t.Errorf("KB with no cross link: %q", tok)
 	}
 }
+
+// AC-atlas-kb-map-3: the revision of A never reads the view of a KB the caller
+// cannot read whole, so a poll cannot time that KB's revalidation.
+func TestRevisionDoesNotReadUnreadableKBView(t *testing.T) {
+	setRevisionMaxAge(t, 0)
+	r := newCrossRig(t)
+	putPage(t, r.b, "back", "[[kb:kb-a/p]]\n")
+	putPage(t, r.c, "back", "[[kb:kb-a/p]]\n")
+	ctx := crossCallers()["a-only"]
+	revisionOf(t, ctx, r.a) // warm
+	b, c := r.b.GraphValidations(), r.c.GraphValidations()
+	for i := 0; i < 3; i++ {
+		revisionOf(t, ctx, r.a)
+	}
+	if n := r.b.GraphValidations(); n != b {
+		t.Errorf("kb-b, unreadable, was validated %d times", n-b)
+	}
+	if n := r.c.GraphValidations(); n != c {
+		t.Errorf("kb-c, unreadable, was validated %d times", n-c)
+	}
+}

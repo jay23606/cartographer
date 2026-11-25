@@ -17,7 +17,8 @@ import (
 //
 // Only a KB the caller reads whole counts: /revision answers 404 for any other,
 // so a token that moved for a KB the caller cannot poll would tell it that KB
-// changed. The digest never carries a name. One KB at a time, never under
+// changed. An unreadable KB is filtered before its view is read: reading it
+// would cost a revalidation a poller could time. The digest never carries a name. One KB at a time, never under
 // another KB's lock. A link the relation guard leaves unresolved can still name
 // its KB here: the token may then move for nothing, which discloses nothing.
 func crossRevisionSuffix(ctx context.Context, k *kb.KB) string {
@@ -27,7 +28,9 @@ func crossRevisionSuffix(ctx context.Context, k *kb.KB) string {
 			set[n] = true
 		}
 	}
-	for _, n := range k.CrossLinkedFromWithin(uiRevisionMaxAge) {
+	for _, n := range k.CrossLinkedFromWithin(uiRevisionMaxAge, func(n string) bool {
+		return crossReadable(ctx, k, n)
+	}) {
 		set[n] = true
 	}
 	names := make([]string, 0, len(set))

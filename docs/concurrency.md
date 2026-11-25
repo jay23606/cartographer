@@ -415,7 +415,7 @@ KB's view is released before another's is read), so a lint or a write of KB A
 under A's git lock cannot deadlock with a transfer holding both locks. It never
 writes to the other KB. The price: it sees the other KB's working tree as served,
 which can be a few milliseconds ahead of its commit; the next read corrects it.
-`CrossLinkedFrom` reads one KB's snapshot at a time under that KB's leaf mutex, never two together.
+`CrossLinkedFrom` (and `CrossLinkedFromWithin`, which skips the KBs its predicate rejects) reads one KB's snapshot at a time under that KB's leaf mutex, never two together.
 
 ## Operator recovery
 
