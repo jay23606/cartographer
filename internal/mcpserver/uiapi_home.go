@@ -207,7 +207,7 @@ func uiRevision(w http.ResponseWriter, r *http.Request, k *kb.KB) {
 		writeUIInternal(w, "revision", err)
 		return
 	}
-	writeUIJSON(w, http.StatusOK, map[string]string{"revision": uiRevisionBoot + "-" + strconv.FormatUint(gen, 10)})
+	writeUIJSON(w, http.StatusOK, map[string]string{"revision": uiRevisionBoot + "-" + strconv.FormatUint(gen, 10) + crossRevisionSuffix(r.Context(), k)})
 }
 
 // birthsCache keeps, per KB root, the births computed at one HEAD. They change

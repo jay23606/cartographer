@@ -408,8 +408,18 @@ func (kb *KB) graphCacheLocked() *graphCache {
 // graphView validates the cache against the files and returns the current
 // view, building a new one when anything changed.
 func (kb *KB) graphView() (*graphView, error) {
+	return kb.graphViewWithin(0)
+}
+
+// graphViewWithin is graphView for a poller: a view validated less than maxAge
+// ago is returned without another walk (the rule of GraphGenerationWithin);
+// maxAge 0 always validates.
+func (kb *KB) graphViewWithin(maxAge time.Duration) (*graphView, error) {
 	kb.graphMu.Lock()
 	defer kb.graphMu.Unlock()
+	if c := kb.graph; maxAge > 0 && c != nil && c.view != nil && !c.stale && time.Since(c.validatedAt) < maxAge {
+		return c.view, nil
+	}
 	return kb.graphViewLocked(nil)
 }
 

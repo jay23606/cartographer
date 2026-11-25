@@ -4,6 +4,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/BeppeTemp/cartographer/internal/okf"
 )
@@ -80,14 +81,19 @@ func (kb *KB) CrossLinks() (map[okf.ConceptID][]CrossLink, error) {
 // CrossLinkedKBs lists the current mount names of the KBs the current view
 // links to: well-formed links with no server qualifier whose name (or alias)
 // is mounted, this KB's own name excluded. Sorted, without duplicates.
-func (kb *KB) CrossLinkedKBs() ([]string, error) {
-	v, err := kb.graphView()
-	if err != nil {
-		return nil, err
-	}
+func (kb *KB) CrossLinkedKBs() ([]string, error) { return kb.CrossLinkedKBsWithin(0) }
+
+// CrossLinkedKBsWithin is CrossLinkedKBs for a poller: a view validated less
+// than maxAge ago is trusted (GraphGenerationWithin). A KB with no mounts
+// answers without reading its view.
+func (kb *KB) CrossLinkedKBsWithin(maxAge time.Duration) ([]string, error) {
 	m := kb.Mounts()
 	if m == nil {
 		return nil, nil
+	}
+	v, err := kb.graphViewWithin(maxAge)
+	if err != nil {
+		return nil, err
 	}
 	self, set := kb.MountName(), map[string]bool{}
 	for _, ls := range v.cross {
@@ -109,4 +115,38 @@ func (kb *KB) CrossLinkedKBs() ([]string, error) {
 	}
 	sort.Strings(out)
 	return out, nil
+}
+
+// CrossLinkedFrom lists the current mount names of the other KBs whose current
+// view links to this one (the opposite direction of CrossLinkedKBs). Sorted,
+// without duplicates. It reads one KB's snapshot at a time, each under that
+// KB's own leaf graph mutex, never two together and never a git lock. A KB
+// whose snapshot cannot be read is left out: unknown, never an error here.
+func (kb *KB) CrossLinkedFrom() []string { return kb.CrossLinkedFromWithin(0) }
+
+// CrossLinkedFromWithin is CrossLinkedFrom for a poller (see CrossLinkedKBsWithin).
+func (kb *KB) CrossLinkedFromWithin(maxAge time.Duration) []string {
+	m, self := kb.Mounts(), kb.MountName()
+	if m == nil || self == "" {
+		return nil
+	}
+	var out []string
+	for _, name := range m.Names() {
+		x, ok := m.Lookup(name)
+		if !ok || x == kb {
+			continue
+		}
+		linked, err := x.CrossLinkedKBsWithin(maxAge)
+		if err != nil {
+			continue
+		}
+		for _, n := range linked {
+			if n == self {
+				out = append(out, name)
+				break
+			}
+		}
+	}
+	sort.Strings(out)
+	return out
 }

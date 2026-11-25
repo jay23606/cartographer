@@ -1461,7 +1461,7 @@ nodes or links — gives the whole network a small knock that fades with
 distance (a few changes share one knock, no node moves faster than a single
 knock would move it, and a bulk change of more than 20 origins reheats the
 simulation instead of pushing), while the camera and its slow turn carry on undisturbed. A hidden tab does not poll and checks once on
-return. A caller that cannot see the whole KB gets no revision, so its Atlas
+return. The revision of a KB also moves when a KB it is cross-linked with, in either direction, and the caller reads whole, changes (a `-x<12 hex>` suffix, a digest and never a name); a KB with no cross link has the same token as before, and a caller reading the linked KB only in part is not refreshed by it. A caller that cannot see the whole KB gets no revision, so its Atlas
 does not refresh by itself.
 
 Behind an SSO reverse proxy that protects `/ui` and `/api/ui` only (leave `/mcp`

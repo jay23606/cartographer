@@ -98,3 +98,38 @@ func TestCrossLinkedKBs(t *testing.T) {
 		t.Errorf("no mounts: %v", got)
 	}
 }
+
+// AC-atlas-kb-map-1
+func TestCrossLinkedFrom(t *testing.T) {
+	a, b := mountedPair(t, map[string]string{"old-a": "kb-a"})
+	c := mustInitKB(t)
+	m := NewMounts(map[string]*KB{"kb-a": a, "kb-b": b, "kb-c": c}, []string{"kb-a", "kb-b", "kb-c"}, map[string]string{"old-a": "kb-a"})
+	for _, k := range []*KB{a, b, c} {
+		k.SetMounts(m)
+	}
+	if got := a.CrossLinkedFrom(); len(got) != 0 {
+		t.Fatalf("nothing links to kb-a yet: %v", got)
+	}
+	writeConcept(t, b, "p", "[[kb:old-a/x]] [[kb:kb-a/y]]\n")
+	writeConcept(t, c, "p", "[[kb:kb-a/x]] [[kb:kb-b/x]]\n")
+	if got := a.CrossLinkedFrom(); !reflect.DeepEqual(got, []string{"kb-b", "kb-c"}) {
+		t.Errorf("CrossLinkedFrom = %v, want sorted and deduped [kb-b kb-c]", got)
+	}
+	// Own name, @server and malformed links are no inbound link.
+	writeConcept(t, a, "p", "[[kb:kb-a/x]]\n")
+	writeConcept(t, b, "p", "[[kb:kb-a@host/x]] [[kb:bad name/x]]\n")
+	if got := a.CrossLinkedFrom(); !reflect.DeepEqual(got, []string{"kb-c"}) {
+		t.Errorf("after excluding links: %v, want [kb-c]", got)
+	}
+	// A link added or removed on disk is seen by the next call.
+	if err := os.Remove(filepath.Join(c.DataRoot(), "p.md")); err != nil {
+		t.Fatal(err)
+	}
+	writeConcept(t, b, "p", "[[kb:kb-a/x]]\n")
+	if got := a.CrossLinkedFrom(); !reflect.DeepEqual(got, []string{"kb-b"}) {
+		t.Errorf("after the change: %v, want [kb-b]", got)
+	}
+	if got := mustInitKB(t).CrossLinkedFrom(); len(got) != 0 {
+		t.Errorf("no mounts: %v", got)
+	}
+}
