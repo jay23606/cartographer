@@ -1,12 +1,14 @@
 package clientconfig_test
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
 
+	"github.com/BeppeTemp/cartographer/internal/client"
 	"github.com/BeppeTemp/cartographer/internal/clientconfig"
 )
 
@@ -308,5 +310,36 @@ func TestCAFileRoundTrip(t *testing.T) {
 	got.CAFilePath = "relative/ca.pem"
 	if _, err := got.CAFile(); err == nil || !strings.Contains(err.Error(), "server.ca_file") {
 		t.Errorf("a relative path must be an error naming the key, got %v", err)
+	}
+}
+
+// A missing CA file is an error naming the key and the path, and never reads as
+// "no config file" (LoadOrDefault would hand back defaults for it).
+func TestMissingCAFileIsNotAMissingConfig(t *testing.T) {
+	dir := t.TempDir()
+	cfg := clientconfig.Default()
+	cfg.ServerURL = "https://example.com/mcp"
+	cfg.CAFilePath = filepath.Join(dir, "gone.pem")
+	if err := clientconfig.Save(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	old := clientconfig.OnLoad
+	t.Cleanup(func() { clientconfig.OnLoad = old })
+	clientconfig.OnLoad = func(c *clientconfig.Config) error {
+		p, err := c.CAFile()
+		if err != nil {
+			return err
+		}
+		return client.SetServerCA(p, c.ServerURL)
+	}
+	_, err := clientconfig.Load(dir)
+	if err == nil || errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("Load must fail without matching ErrNotExist, got %v", err)
+	}
+	if got, err := clientconfig.LoadOrDefault(dir); err == nil || got != nil {
+		t.Fatalf("LoadOrDefault must fail, got %v, %v", got, err)
+	}
+	if !strings.Contains(err.Error(), "gone.pem") {
+		t.Errorf("the error must name the path: %v", err)
 	}
 }

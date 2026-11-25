@@ -74,55 +74,108 @@ func RedirectPolicy(allowInsecure bool) func(req *http.Request, via []*http.Requ
 
 // serverCA is the extra trust of the configured server (server.ca_file, WP6):
 // the system roots plus one private CA file, honoured for one host:port only.
+//
+// The registry is keyed by canonical host:port, so the configs of several
+// directories (the main one and a workspace's) can each register their server
+// and none clears another's entry.
 var serverCA struct {
 	sync.RWMutex
-	host string
+	byHost map[string]serverTrust
+}
+
+type serverTrust struct {
 	pool *x509.CertPool
 	rt   http.RoundTripper
 }
 
+// CAFileError is a CA file that cannot be used: unreadable, or holding no PEM
+// certificate. It is typed and does not unwrap to its cause on purpose: the
+// cause of an unreadable file is os.ErrNotExist, and callers that read
+// errors.Is(err, os.ErrNotExist) as "no .cartographer.yaml, first connect"
+// (LoadOrDefault, loadConfigForWrite) would take a missing CA file for a
+// missing config and write defaults over the user's settings.
+type CAFileError struct {
+	// Source is where the path came from: "server.ca_file" or
+	// "CARTOGRAPHER_CA_FILE". Empty when the caller of SetServerCA did not say.
+	Source string
+	Path   string
+	Reason string
+}
+
+func (e *CAFileError) Error() string {
+	src := e.Source
+	if src == "" {
+		src = "server.ca_file"
+	}
+	return fmt.Sprintf("client: the CA file %s (%s) cannot be used: %s", e.Path, src, e.Reason)
+}
+
+// canonicalHost is the lower-case host:port of u, the port defaulted from the
+// scheme (443 for https, 80 for http), so "example.com" and "example.com:443"
+// name the same endpoint.
+func canonicalHost(u *url.URL) string {
+	port := u.Port()
+	if port == "" {
+		port = "80"
+		if strings.EqualFold(u.Scheme, "https") {
+			port = "443"
+		}
+	}
+	return net.JoinHostPort(strings.ToLower(u.Hostname()), port)
+}
+
 // SetServerCA registers path, a PEM file, as an extra root for requests to the
-// host:port of serverURL. The system roots stay trusted and no other host
-// trusts the file. An empty path clears it. A file that cannot be read or holds
-// no certificate is an error, never a silent fallback.
+// host:port of serverURL, replacing only that host's entry. The system roots
+// stay trusted and no other host trusts the file. An empty path removes the
+// entry of serverURL's host; an empty path and URL clear the registry. A file
+// that cannot be read or holds no certificate is a *CAFileError, never a
+// silent fallback.
 func SetServerCA(path, serverURL string) error {
 	serverCA.Lock()
 	defer serverCA.Unlock()
-	serverCA.host, serverCA.pool, serverCA.rt = "", nil, nil
 	if path == "" {
+		if serverURL == "" {
+			serverCA.byHost = nil
+		} else if u, err := url.Parse(serverURL); err == nil && u.Host != "" {
+			delete(serverCA.byHost, canonicalHost(u))
+		}
 		return nil
 	}
 	pem, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("client: ca_file: %w", err)
+		// %v, not %w: see CAFileError.
+		return &CAFileError{Path: path, Reason: fmt.Sprintf("%v", err)}
 	}
 	pool, err := x509.SystemCertPool()
 	if err != nil || pool == nil {
 		pool = x509.NewCertPool()
 	}
 	if !pool.AppendCertsFromPEM(pem) {
-		return fmt.Errorf("client: ca_file %s holds no PEM certificate", path)
+		return &CAFileError{Path: path, Reason: "it holds no PEM certificate"}
 	}
 	u, err := url.Parse(serverURL)
 	if err != nil || u.Host == "" {
 		return fmt.Errorf("client: invalid server URL %q", serverURL)
 	}
-	serverCA.host, serverCA.pool = u.Host, pool
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.TLSClientConfig = &tls.Config{RootCAs: pool, MinVersion: tls.VersionTLS12}
-	serverCA.rt = t
+	if serverCA.byHost == nil {
+		serverCA.byHost = map[string]serverTrust{}
+	}
+	serverCA.byHost[canonicalHost(u)] = serverTrust{pool: pool, rt: t}
 	return nil
 }
 
-// ServerRoots returns the pool to verify host (host:port) with, or nil when
-// the system roots apply: mcpprobe's own dial path uses it.
+// ServerRoots returns the pool to verify host (host or host:port, https) with,
+// or nil when the system roots apply: mcpprobe's own dial path uses it.
 func ServerRoots(host string) *x509.CertPool {
+	u, err := url.Parse("https://" + host)
+	if err != nil || u.Host == "" {
+		return nil
+	}
 	serverCA.RLock()
 	defer serverCA.RUnlock()
-	if serverCA.pool != nil && strings.EqualFold(serverCA.host, host) {
-		return serverCA.pool
-	}
-	return nil
+	return serverCA.byHost[canonicalHost(u)].pool
 }
 
 // scopedTransport sends the registered server host through the transport that
@@ -131,14 +184,17 @@ type scopedTransport struct{}
 
 func (scopedTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	serverCA.RLock()
-	rt := serverCA.rt
-	match := rt != nil && strings.EqualFold(serverCA.host, req.URL.Host)
+	tr, ok := serverCA.byHost[canonicalHost(req.URL)]
 	serverCA.RUnlock()
-	if match {
-		return rt.RoundTrip(req)
+	if ok {
+		return tr.rt.RoundTrip(req)
 	}
 	return http.DefaultTransport.RoundTrip(req)
 }
+
+// ScopedTransport is the transport of HTTPClient: for a caller that builds its
+// own http.Client (headers, redirect rule) and must still trust the server CA.
+func ScopedTransport() http.RoundTripper { return scopedTransport{} }
 
 // HTTPClient returns a copy of base whose redirects obey RedirectPolicy. A base
 // with no Transport also trusts the server's CA file for that host (SetServerCA).

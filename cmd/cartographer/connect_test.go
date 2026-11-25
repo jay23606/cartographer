@@ -792,3 +792,107 @@ func TestConnectCAFilePrecedenceAndReconnect(t *testing.T) {
 		t.Errorf("reconnect must keep server.ca_file: %q, %v", cfg.CAFilePath, err)
 	}
 }
+
+// A missing CA file stops connect before it writes: the server URL and the
+// settings of the existing config stay, and the message names the CA file and
+// where its path came from.
+func TestConnectMissingCAFileKeepsTheConfig(t *testing.T) {
+	old := clientconfig.OnLoad
+	t.Cleanup(func() { clientconfig.OnLoad = old; _ = client.SetServerCA("", "") })
+	clientconfig.OnLoad = registerServerCA
+	dir := t.TempDir()
+	cfg := clientconfig.Default()
+	cfg.ServerURL = "https://kb.example.com/mcp"
+	cfg.CAFilePath = filepath.Join(dir, "gone.pem")
+	if err := clientconfig.Save(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	before, _ := os.ReadFile(clientconfig.Path(dir))
+
+	_, err := loadConfigForWrite(dir)
+	if err == nil {
+		t.Fatal("a missing CA file must stop the command, not hand back defaults")
+	}
+	for _, want := range []string{"gone.pem", "server.ca_file", "CA file"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the message must contain %q: %v", want, err)
+		}
+	}
+	if strings.Contains(err.Error(), "connect first") {
+		t.Errorf("a CA file problem is not a missing config: %v", err)
+	}
+	if got := describeClientConfigError(dir, errors.Join(err)); strings.Contains(got, "connect first") {
+		t.Errorf("describeClientConfigError: %s", got)
+	}
+	after, _ := os.ReadFile(clientconfig.Path(dir))
+	if string(before) != string(after) {
+		t.Error("the config was rewritten")
+	}
+
+	// The environment names itself as the source.
+	t.Setenv(clientconfig.CAFileEnv, filepath.Join(dir, "env-gone.pem"))
+	if _, err := loadConfigForWrite(dir); err == nil || !strings.Contains(err.Error(), clientconfig.CAFileEnv) {
+		t.Errorf("the message must name the variable: %v", err)
+	}
+}
+
+// A config loaded without ca_file (a workspace's) does not clear the CA of the
+// main config.
+func TestLoadWithoutCAFileKeepsTheMainCA(t *testing.T) {
+	old := clientconfig.OnLoad
+	t.Cleanup(func() { clientconfig.OnLoad = old; _ = client.SetServerCA("", "") })
+	clientconfig.OnLoad = registerServerCA
+	tls := httptest.NewTLSServer(http.NotFoundHandler())
+	defer tls.Close()
+	ca := filepath.Join(t.TempDir(), "ca.pem")
+	if err := os.WriteFile(ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: tls.Certificate().Raw}), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	main, ws := t.TempDir(), t.TempDir()
+	cfg := clientconfig.Default()
+	cfg.ServerURL, cfg.CAFilePath = tls.URL+"/mcp", ca
+	if err := clientconfig.Save(main, cfg); err != nil {
+		t.Fatal(err)
+	}
+	other := clientconfig.Default()
+	other.ServerURL = tls.URL + "/mcp"
+	if err := clientconfig.Save(ws, other); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clientconfig.Load(main); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := clientconfig.Load(ws); err != nil {
+		t.Fatal(err)
+	}
+	hc := client.HTTPClient(&http.Client{}, false)
+	resp, err := hc.Get(tls.URL)
+	if err != nil {
+		t.Fatalf("the main CA must survive the second load: %v", err)
+	}
+	resp.Body.Close()
+}
+
+// An unknown-authority failure says how to fix it, in connect's deferral and
+// in sync's error.
+func TestUnknownAuthorityHint(t *testing.T) {
+	srv := httptest.NewTLSServer(http.NotFoundHandler())
+	defer srv.Close()
+	t.Cleanup(func() { _ = client.SetServerCA("", "") })
+	_, err := client.New(srv.URL, "").Health(5 * time.Second)
+	if err == nil {
+		t.Fatal("the probe must fail verification")
+	}
+	for name, got := range map[string]string{
+		"deferral": deferralReason(err),
+		"sync":     syncErrorText(err, t.TempDir(), ""),
+		"probe":    probeErrorMessage(probeUnreachable, err),
+	} {
+		if !strings.Contains(got, "--ca-file <pem>") || !strings.Contains(got, "CARTOGRAPHER_CA_FILE") || strings.Contains(got, "trust") {
+			t.Errorf("%s: %q", name, got)
+		}
+	}
+	if got := deferralReason(errors.New("boom")); strings.Contains(got, "--ca-file") {
+		t.Errorf("the hint belongs to certificate failures only: %q", got)
+	}
+}

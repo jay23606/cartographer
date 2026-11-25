@@ -730,17 +730,26 @@ var OnLoad func(*Config) error
 // CAFileEnv is the environment variable that sets the CA file for one run.
 const CAFileEnv = "CARTOGRAPHER_CA_FILE"
 
+// CAFileSource names where CAFile reads its path from: the environment
+// variable when it is set, else the config key.
+func (c *Config) CAFileSource() string {
+	if strings.TrimSpace(os.Getenv(CAFileEnv)) != "" {
+		return CAFileEnv
+	}
+	return "server.ca_file"
+}
+
 // CAFile returns the PEM file of the private CA that signed the server's
 // certificate: CARTOGRAPHER_CA_FILE, else server.ca_file, with ~ and $HOME
 // expanded. Empty means the system roots only. A relative path is an error
 // naming the key.
 func (c *Config) CAFile() (string, error) {
-	key, p := "server.ca_file", ""
+	key, p := c.CAFileSource(), ""
 	if c != nil {
 		p = c.CAFilePath
 	}
 	if v := strings.TrimSpace(os.Getenv(CAFileEnv)); v != "" {
-		key, p = CAFileEnv, v
+		p = v
 	}
 	if p == "" {
 		return "", nil

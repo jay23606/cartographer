@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"crypto/x509"
 	"errors"
 	"flag"
 	"fmt"
@@ -152,7 +153,22 @@ func probeErrorMessage(state probeState, err error) string {
 	if re := (*client.RemoteError)(nil); errors.As(err, &re) && !isTransportErr(err) {
 		return fmt.Sprintf("the server answered but the probe failed: %v", err)
 	}
+	if isUnknownAuthority(err) {
+		return fmt.Sprintf("server unreachable: %v%s", err, unknownAuthorityHint)
+	}
 	return fmt.Sprintf("server unreachable: %v", err)
+}
+
+// unknownAuthorityHint is appended to a failure whose cause is a server
+// certificate no CA of this machine signed. "accepts", not "trusts": the text
+// is printed, never written to a client file.
+const unknownAuthorityHint = "; the server's certificate is not signed by a CA this machine accepts: pass --ca-file <pem> to connect, or set CARTOGRAPHER_CA_FILE"
+
+// isUnknownAuthority reports whether err comes from a TLS handshake that found
+// no root for the server's certificate.
+func isUnknownAuthority(err error) bool {
+	var ua x509.UnknownAuthorityError
+	return errors.As(err, &ua)
 }
 
 // isLoopbackURL reports whether rawURL's host is loopback (client.IsLoopbackHost) —
@@ -488,6 +504,13 @@ func cmdConnect(args []string) int {
 			}
 
 			formOpts.AllowInsecureHTTP = opts.AllowInsecureHTTP
+			// The form has no CA field: the flag (or the existing key) still
+			// applies to the probes below and to the connect that follows.
+			formOpts.CAFile = opts.CAFile
+			if err := registerServerCA(&clientconfig.Config{ServerURL: formOpts.ServerURL, CAFilePath: formOpts.CAFile}); err != nil {
+				formPrefill, errMsg = formOpts, err.Error()
+				continue
+			}
 			if err := client.CheckServerURL(formOpts.ServerURL, formOpts.insecureHTTPAllowed()); err != nil {
 				formPrefill, errMsg = formOpts, err.Error()
 				continue
@@ -685,6 +708,9 @@ func tokenSourceName(cfg *clientconfig.Config) string {
 // deferralReason words why a skill sync was deferred: "server unreachable" is
 // only true of a transport failure.
 func deferralReason(err error) string {
+	if isUnknownAuthority(err) {
+		return "server unreachable" + unknownAuthorityHint
+	}
 	if isTransportErr(err) {
 		return "server unreachable"
 	}
@@ -864,7 +890,21 @@ func loadConfigForWrite(dir string) (*clientconfig.Config, error) {
 	if err == nil {
 		return cfg, nil
 	}
+	var cae *client.CAFileError
+	if errors.As(err, &cae) {
+		return nil, fmt.Errorf("%s, nothing was changed (the client config %s was not touched): %w", caFileProblem(cae), clientconfig.Path(dir), err)
+	}
 	return nil, fmt.Errorf("the client config cannot be read, nothing was changed (fix or remove %s): %w", clientconfig.Path(dir), err)
+}
+
+// caFileProblem words an unusable CA file: which file, where the path was set,
+// and what to change. It is the head of every message about such a Load error.
+func caFileProblem(e *client.CAFileError) string {
+	fix := "fix the file or unset " + e.Source
+	if e.Source == clientconfig.CAFileEnv {
+		fix = "fix the file or unset the variable"
+	}
+	return fmt.Sprintf("the CA file %s (%s) cannot be used (%s)", e.Path, e.Source, fix)
 }
 
 // ensureSyncTimer installs the scheduled trigger when a provider being
@@ -1043,7 +1083,17 @@ func registerServerCA(cfg *clientconfig.Config) error {
 	if err != nil {
 		return err
 	}
-	return client.SetServerCA(p, cfg.ServerURL)
+	if p == "" {
+		// A config without a CA file (a workspace's, another server's) must not
+		// clear what the main config registered: the registry is per host.
+		return nil
+	}
+	err = client.SetServerCA(p, cfg.ServerURL)
+	var cae *client.CAFileError
+	if errors.As(err, &cae) {
+		cae.Source = cfg.CAFileSource()
+	}
+	return err
 }
 
 // insecureHTTPAllowed reports whether this connect may reach a non-loopback
