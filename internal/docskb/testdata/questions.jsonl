@@ -76,3 +76,5 @@
 {"q": "why do paths in a KB use placeholders instead of absolute paths?", "want": ["decisions/d75-path-portability-across-machines-placeholders-auto", "decisions/d263-a-kb-declares-its-path-placeholder-registry"]}
 {"q": "how does a KB find the sibling KBs mounted on the same server?", "want": ["internals-contributing/cross-kb-links"]}
 {"q": "does a mounted name beat a kb_aliases alias when a KB looks up a sibling?", "want": ["internals-contributing/cross-kb-links"]}
+{"q": "how does a page link a page of another mounted KB?", "want": ["internals-contributing/cross-kb-links", "internals-contributing/cross-kb-links/syntax-extraction-and-storage"]}
+{"q": "when is a link to another KB a broken_cross_kb_link finding?", "want": ["internals-contributing/cross-kb-links", "internals-contributing/cross-kb-links/the-check-and-what-clears-orphan"]}
