@@ -60,10 +60,41 @@ func TestClientBindLineage(t *testing.T) {
 		}
 	}
 
-	// Binding by hand a KB the provider excludes is refused, nothing changes.
-	withStderr(t, func() { code = cmdClient([]string{"bind", "codex", "core-kb"}) })
-	if code != 2 || slices.Contains(loadCfg(t, home).Clients["codex"].KBs, "core-kb") {
-		t.Errorf("bind of an excluded KB: exit %d", code)
+	// A bind replaces the options whole: without a flag they go off, and the
+	// KB the old exclude named can be bound by the same command.
+	withStdout(t, func() { code = cmdClient([]string{"bind", "codex", "core-kb"}) })
+	if b := loadCfg(t, home).Clients["codex"]; code != 0 || len(b.Exclude) != 0 || b.NoLineage || !slices.Contains(b.KBs, "core-kb") {
+		t.Errorf("rebind without flags: exit %d, %+v", code, b)
+	}
+}
+
+// The first bind of a provider with no explicit binding holds `kbs` alone,
+// not the default every-known-KB list: excluding a known KB is allowed.
+func TestClientBindFirstBindExclude(t *testing.T) {
+	home := providerLineageHome(t)
+	var code int
+	withStdout(t, func() { code = cmdClient([]string{"bind", "codex", "client-kb", "--exclude", "core-kb"}) })
+	if b := loadCfg(t, home).Clients["codex"]; code != 0 || !slices.Equal(b.Exclude, []string{"core-kb"}) {
+		t.Fatalf("exit %d, %+v", code, b)
+	}
+}
+
+// A stored exclude naming a KB must not block the bind that replaces it.
+func TestClientBindOfExcludedKBWithNewOptions(t *testing.T) {
+	home := providerLineageHome(t)
+	var code int
+	withStdout(t, func() { code = cmdClient([]string{"bind", "codex", "client-kb", "--exclude", "core-kb"}) })
+	for _, args := range [][]string{
+		{"bind", "codex", "core-kb", "--exclude", "other-kb"},
+		{"bind", "codex", "core-kb", "--no-lineage"},
+	} {
+		withStdout(t, func() { code = cmdClient(args) })
+		b := loadCfg(t, home).Clients["codex"]
+		if code != 0 || !slices.Contains(b.KBs, "core-kb") || slices.Contains(b.Exclude, "core-kb") {
+			t.Fatalf("%v: exit %d, %+v", args, code, b)
+		}
+		withStdout(t, func() { cmdClient([]string{"unbind", "codex", "core-kb"}) })
+		withStdout(t, func() { code = cmdClient([]string{"bind", "codex", "client-kb", "--exclude", "core-kb"}) })
 	}
 }
 

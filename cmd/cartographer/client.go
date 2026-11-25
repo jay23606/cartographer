@@ -395,8 +395,13 @@ func clientBind(dir string, cfg *clientconfig.Config, args []string) int {
 	if lineageGiven {
 		// Same rules as workspace bind; the KBs checked are the ones the
 		// binding will hold, so a KB already bound and excluded is caught too.
-		own, _ := cfg.BoundOwnKBs(provider)
-		if code := checkLineageFlags(append(own, kbs...), exclude, false, noLineage); code != 0 {
+		// A provider with no explicit binding is bound to `kbs` alone: its
+		// default list (every known KB) is not what the bind will hold.
+		held := kbs
+		if own, explicit := cfg.BoundOwnKBs(provider); explicit {
+			held = append(own, kbs...)
+		}
+		if code := checkLineageFlags(held, exclude, false, noLineage); code != 0 {
 			return code
 		}
 	}
@@ -414,6 +419,15 @@ func clientBind(dir string, cfg *clientconfig.Config, args []string) int {
 		}
 		added = append(added, kb)
 	}
+	// The options replace the binding's whole on every bind, as workspace bind
+	// does: clear the stored ones first, so a KB the old exclude named can be
+	// bound, and set the new ones after the KB list is complete.
+	if wasExplicit {
+		if err := cfg.SetProviderLineage(provider, false, nil); err != nil {
+			fmt.Fprintln(os.Stderr, "Error:", err)
+			return 2
+		}
+	}
 	for _, kb := range kbs {
 		if err := cfg.Bind(provider, kb); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
@@ -421,7 +435,6 @@ func clientBind(dir string, cfg *clientconfig.Config, args []string) int {
 		}
 	}
 	if lineageGiven {
-		// The options replace the binding's whole, as a rebind does.
 		if err := cfg.SetProviderLineage(provider, noLineage, exclude); err != nil {
 			fmt.Fprintln(os.Stderr, "Error:", err)
 			return 2
