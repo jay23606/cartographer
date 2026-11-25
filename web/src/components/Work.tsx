@@ -53,6 +53,7 @@ interface Extra {
   found: string[];
 }
 const NO_EXTRA: Extra = { entries: [], found: [] };
+const NO_DASHBOARDS: DashboardListEntry[] = [];
 
 /**
  * A concept listed only for its unchecked items is grouped apart: its own
@@ -133,19 +134,18 @@ export function Work({
   const [map, setMap] = useState<string | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [staleOnly, setStaleOnly] = useState(false);
-  const [dashboards, setDashboards] = useState<DashboardListEntry[]>([]);
+  // Held with the KB they were read for: under another KB the list is empty
+  // on the very first render, never the previous KB's names.
+  const [dashList, setDashList] = useState<{ kb: string; list: DashboardListEntry[] }>({ kb, list: [] });
+  const dashboards = dashList.kb === kb ? dashList.list : NO_DASHBOARDS;
 
   // The KB's dashboards fill the selector. Optional: an older server or a
-  // caller the route refuses has the Work board alone. A new KB starts with
-  // none, so the previous KB's names are never offered under this one.
-  useEffect(() => {
-    setDashboards([]);
-  }, [kb]);
+  // caller the route refuses has the Work board alone.
   useEffect(() => {
     const controller = new AbortController();
     optional(fetchDashboards(kb, controller.signal))
       .then((res) => {
-        if (!controller.signal.aborted) setDashboards(res?.dashboards ?? []);
+        if (!controller.signal.aborted) setDashList({ kb, list: res?.dashboards ?? [] });
       })
       .catch(() => undefined);
     return () => controller.abort();
