@@ -107,11 +107,10 @@ func deriveWorkspaceBindings(cfg *clientconfig.Config, targets []string, dir str
 	}
 	cfg.SetDerived(next)
 
-	// The lineage KBs are pulled here, once, and merged into the pulls the
-	// manifest build reuses. One that fails costs every projection holding it
-	// (its failure is in pre, so cfg keeps the closure that names it and those
-	// providers are skipped), while the stored entry of each seed that names it
-	// is put back as it was: stored state never names a KB nothing could apply.
+	// Lineage KBs are pulled once, here, for the manifest build to reuse. A
+	// failed one skips its holders (its failure is in pre) while the stored
+	// entry of its seeds is put back: stored state never names a KB nothing
+	// could apply.
 	if extra := lineageKBsToPull(cfg, targets, pre); len(extra) > 0 {
 		cs, failed, err := fetchCandidatesPartial(cfg, extra)
 		if err != nil {

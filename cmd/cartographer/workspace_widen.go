@@ -12,8 +12,8 @@ import (
 	"github.com/BeppeTemp/cartographer/internal/clientconfig"
 )
 
-// merge adds the pulls of o to p (a nil p is o). The `relations` of o are not
-// read: a closure is already transitive, a lineage KB is never a seed.
+// merge adds the pulls of o to p; the relations of o are not read (a lineage
+// KB is never a seed).
 func (p *prefetched) merge(o *prefetched) *prefetched {
 	if p == nil {
 		return o
@@ -52,9 +52,8 @@ func lineageKBsToPull(cfg *clientconfig.Config, targets []string, pre *prefetche
 	return out
 }
 
-// restoredLineage is lineage with the stored entry put back for every seed
-// whose closure holds a KB that could not be pulled (no stored entry: it goes).
-// It copies the map: cfg keeps the new closure for the projections.
+// restoredLineage puts back the stored entry of every seed whose closure holds
+// a KB that could not be pulled. It copies: cfg keeps the new closure.
 func restoredLineage(prev clientconfig.DerivedState, lineage map[string]clientconfig.DerivedLineage, failed []kbPullFailure, errw io.Writer) map[string]clientconfig.DerivedLineage {
 	if len(failed) == 0 {
 		return lineage
@@ -103,8 +102,7 @@ func (w widening) record(now time.Time) *clientconfig.DerivedChange {
 	return c
 }
 
-// bindingSnapshot is every KB the targeted providers hold through a derived
-// binding (paths.yaml) or through lineage, per path or provider.
+// bindingSnapshot is every KB held through paths.yaml or lineage, per path or provider.
 func bindingSnapshot(cfg *clientconfig.Config, targets []string) map[clientconfig.DerivedChangeItem]bool {
 	out := map[clientconfig.DerivedChangeItem]bool{}
 	for _, p := range targets {
