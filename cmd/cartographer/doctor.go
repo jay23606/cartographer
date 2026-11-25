@@ -239,6 +239,7 @@ func runDoctor(dir, only string) doctorReport {
 		}
 		findings = append(findings, checkMCPEntries(dir, cfg, providers)...)
 		findings = append(findings, checkLineageExclude(dir, cfg)...)
+		findings = append(findings, checkLineage(dir, cfg)...)
 		// One probe for the whole run (an unreachable server costs one
 		// probeTimeout, not three); the facts and the error go down.
 		facts, healthErr := enumerateKBs(cfg.ServerURL, cfg.Auth, cfg.Token, cfg.InsecureHTTPAllowed())
