@@ -227,28 +227,37 @@ func TestTwoBlocksMergeIntoOne(t *testing.T) {
 	}
 }
 
-// A comment line glued to the block, with no blank line, moves with it; a note
-// set apart by a blank line stays above its key.
+// The cut starts at the divider: a note glued above it stays on the key, a note
+// glued below the block's last line moves with the block, a note set apart by a
+// blank line below stays above its key.
 func TestGluedNoteMovesWithTheBlockAndSeparatedStays(t *testing.T) {
-	glued := "# glued note\n# --- available settings ---\n# name: x\nextra: 1\n"
-	out, _, err := shapeSchema.Realign([]byte(glued), Registry{})
-	if err != nil {
-		t.Fatal(err)
+	realign := func(in string) string {
+		t.Helper()
+		out, _, err := shapeSchema.Realign([]byte(in), Registry{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		again, _, err := shapeSchema.Realign(out, Registry{})
+		if err != nil || string(again) != string(out) {
+			t.Errorf("not idempotent: %v\n%s\n---\n%s", err, out, again)
+		}
+		return string(out)
 	}
-	got := string(out)
-	if i, j := strings.Index(got, "# glued note"), strings.Index(got, "# --- available settings"); i < 0 || j < 0 || i > j || strings.Index(got, "extra: 1") > i {
-		t.Errorf("the glued note did not move with the block:\n%s", got)
+	at := func(s, sub string) int { return strings.Index(s, sub) }
+	const div = "# --- available settings"
+
+	got := realign("# glued above\n# --- available settings ---\n# name: x\nextra: 1\n")
+	if i := at(got, "# glued above"); i < 0 || i > at(got, "extra: 1") || at(got, div) < at(got, "extra: 1") {
+		t.Errorf("a note glued above the divider must stay on its key:\n%s", got)
 	}
-	apart := "# my note\n\n# --- available settings ---\n# name: x\nextra: 1\n"
-	out, _, err = shapeSchema.Realign([]byte(apart), Registry{})
-	if err != nil {
-		t.Fatal(err)
+
+	got = realign("first: 1\n# --- available settings ---\n# name: x\n# glued below\nextra: 1\n")
+	if at(got, "extra: 1") > at(got, div) || at(got, "# glued below") < at(got, div) {
+		t.Errorf("a note glued below the block must move with it, the key stays above:\n%s", got)
 	}
-	got = string(out)
-	if i := strings.Index(got, "# my note"); i < 0 || i > strings.Index(got, "extra: 1") || strings.Index(got, "# --- available settings") < strings.Index(got, "extra: 1") {
-		t.Errorf("the separated note must stay above its key, the block after it:\n%s", got)
-	}
-	if again, _, _ := shapeSchema.Realign(out, Registry{}); string(again) != got {
-		t.Errorf("not idempotent:\n%s\n---\n%s", got, again)
+
+	got = realign("first: 1\n# --- available settings ---\n# name: x\n\n# my note\nextra: 1\n")
+	if i := at(got, "# my note"); i < 0 || i > at(got, "extra: 1") || at(got, "extra: 1") > at(got, div) || i > at(got, div) {
+		t.Errorf("a separated note must stay above its key, before the block:\n%s", got)
 	}
 }
