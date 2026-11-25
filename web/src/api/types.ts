@@ -399,7 +399,7 @@ export interface WorkResponse {
 }
 
 /**
- * GET /kbs/{kb}/dashboards: the KB's dashboards (D-new-kb-dashboards). A caller
+ * GET /kbs/{kb}/dashboards: the KB's dashboards (D-new-dashboard-ui-routes). A caller
  * that cannot read the whole KB gets names only: every other field is optional.
  */
 export interface DashboardListEntry {
