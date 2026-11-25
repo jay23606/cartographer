@@ -449,3 +449,20 @@ func TestDerivationSeedsAreOwnKBs(t *testing.T) {
 		t.Errorf("a lineage KB derived a binding: %+v", st.Bindings)
 	}
 }
+
+// A hand-edited exclude that names a KB the same binding binds is a doctor
+// warning, and the KB stays bound.
+func TestCheckLineageExclude(t *testing.T) {
+	cfg := clientconfig.Default()
+	cfg.Clients = map[string]clientconfig.ClientBinding{
+		"claude": {KBs: []string{"kb-a"}, KBsSet: true, Exclude: []string{"kb-a", "kb-c"}},
+		"codex":  {KBs: []string{"kb-a"}, KBsSet: true, Exclude: []string{"kb-c"}},
+	}
+	got := checkLineageExclude(t.TempDir(), cfg)
+	if len(got) != 1 || got[0].Check != "lineage-exclude" || !strings.Contains(got[0].Message, "providers.claude") || !strings.Contains(got[0].Message, "kb-a") {
+		t.Errorf("findings = %+v", got)
+	}
+	if kbs, _ := cfg.BoundKBs("claude"); len(kbs) != 1 || kbs[0] != "kb-a" {
+		t.Errorf("the KB must stay bound: %v", kbs)
+	}
+}
