@@ -117,11 +117,10 @@ func deriveWorkspaceBindings(cfg *clientconfig.Config, targets []string, dir str
 		if err != nil {
 			return nil, widening{}, nil, err
 		}
-		kbs := make(map[string]bool, len(extra))
+		pre = pre.merge(&prefetched{cs: cs, failed: failed, kbs: map[string]bool{}})
 		for _, kb := range extra {
-			kbs[kb] = true
+			pre.kbs[kb] = true
 		}
-		pre = pre.merge(&prefetched{cs: cs, failed: failed, kbs: kbs})
 		next.Lineage = restoredLineage(cfg.Derived(), next.Lineage, failed, errw)
 	}
 	widened := diffSnapshots(before, bindingSnapshot(cfg, targets), pre)

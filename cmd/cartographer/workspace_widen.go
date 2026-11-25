@@ -12,25 +12,18 @@ import (
 	"github.com/BeppeTemp/cartographer/internal/clientconfig"
 )
 
-// workspace_widen.go — what one sync widened: the lineage KBs it pulls, and the
-// lines and the sum that announce a change of derived or lineage bindings.
-
 // merge adds the pulls of o to p (a nil p is o). The `relations` of o are not
 // read: a closure is already transitive, a lineage KB is never a seed.
 func (p *prefetched) merge(o *prefetched) *prefetched {
 	if p == nil {
 		return o
 	}
-	for _, m := range []func(){
-		func() { maps.Copy(p.cs.Named, o.cs.Named) },
-		func() { maps.Copy(p.cs.Placeholders, o.cs.Placeholders) },
-		func() { maps.Copy(p.cs.PathRegistries, o.cs.PathRegistries) },
-		func() { maps.Copy(p.cs.Issues, o.cs.Issues) },
-		func() { maps.Copy(p.cs.FeedbackModes, o.cs.FeedbackModes) },
-		func() { maps.Copy(p.kbs, o.kbs) },
-	} {
-		m()
-	}
+	maps.Copy(p.cs.Named, o.cs.Named)
+	maps.Copy(p.cs.Placeholders, o.cs.Placeholders)
+	maps.Copy(p.cs.PathRegistries, o.cs.PathRegistries)
+	maps.Copy(p.cs.Issues, o.cs.Issues)
+	maps.Copy(p.cs.FeedbackModes, o.cs.FeedbackModes)
+	maps.Copy(p.kbs, o.kbs)
 	p.cs.HasBare = p.cs.HasBare || o.cs.HasBare
 	p.failed = append(p.failed, o.failed...)
 	return p
@@ -39,23 +32,20 @@ func (p *prefetched) merge(o *prefetched) *prefetched {
 // lineageKBsToPull is the KBs the effective bindings and provider sets of
 // targets hold by lineage that the pulls in pre do not cover.
 func lineageKBsToPull(cfg *clientconfig.Config, targets []string, pre *prefetched) []string {
-	want := map[string]bool{}
-	for _, p := range targets {
-		for _, k := range cfg.ProviderLineage(p) {
-			want[k] = true
-		}
-		if cfg.DerivesBindings(p) {
-			for _, w := range cfg.WorkspaceBindings(p) {
-				for k := range w.Lineage {
-					want[k] = true
-				}
-			}
+	var out []string
+	add := func(k string) {
+		if !pre.covers([]string{k}) && !slices.Contains(out, k) {
+			out = append(out, k)
 		}
 	}
-	var out []string
-	for k := range want {
-		if !pre.covers([]string{k}) {
-			out = append(out, k)
+	for _, p := range targets {
+		for _, k := range cfg.ProviderLineage(p) {
+			add(k)
+		}
+		for _, w := range cfg.WorkspaceBindings(p) {
+			for k := range w.Lineage {
+				add(k)
+			}
 		}
 	}
 	sort.Strings(out)
@@ -96,8 +86,7 @@ type widening struct {
 }
 
 // count is the number of added items that came by via.
-func (w widening) count(via string) int {
-	n := 0
+func (w widening) count(via string) (n int) {
 	for _, it := range w.Added {
 		if it.Via == via {
 			n++
@@ -109,12 +98,8 @@ func (w widening) count(via string) int {
 // record is the LastChange the run stores, capped as the loader requires.
 func (w widening) record(now time.Time) *clientconfig.DerivedChange {
 	c := &clientconfig.DerivedChange{At: now.UTC().Format(time.RFC3339), Added: w.Added, Removed: w.Removed}
-	if room := clientconfig.MaxLastChangeItems; len(c.Added) > room {
-		c.Added = c.Added[:room]
-	}
-	if room := clientconfig.MaxLastChangeItems - len(c.Added); len(c.Removed) > room {
-		c.Removed = c.Removed[:room]
-	}
+	c.Added = c.Added[:min(len(c.Added), clientconfig.MaxLastChangeItems)]
+	c.Removed = c.Removed[:min(len(c.Removed), clientconfig.MaxLastChangeItems-len(c.Added))]
 	return c
 }
 
@@ -123,28 +108,20 @@ func (w widening) record(now time.Time) *clientconfig.DerivedChange {
 func bindingSnapshot(cfg *clientconfig.Config, targets []string) map[clientconfig.DerivedChangeItem]bool {
 	out := map[clientconfig.DerivedChangeItem]bool{}
 	for _, p := range targets {
-		if cfg.DerivesBindings(p) {
-			for _, b := range cfg.Derived().Bindings[p] {
-				for _, kb := range b.KBs {
-					out[clientconfig.DerivedChangeItem{KB: kb, Path: b.Path, Via: clientconfig.LastChangeViaPaths}] = true
-				}
+		for _, b := range cfg.Derived().Bindings[p] {
+			for _, kb := range b.KBs {
+				out[clientconfig.DerivedChangeItem{KB: kb, Path: b.Path, Via: clientconfig.LastChangeViaPaths}] = true
 			}
-			for _, w := range cfg.WorkspaceBindings(p) {
-				for kb, seeds := range w.Lineage {
-					out[clientconfig.DerivedChangeItem{KB: kb, Path: w.Path, Via: clientconfig.LastChangeViaLineage, From: slices.Min(seeds)}] = true
-				}
+		}
+		for _, w := range cfg.WorkspaceBindings(p) {
+			for kb, seeds := range w.Lineage {
+				out[clientconfig.DerivedChangeItem{KB: kb, Path: w.Path, Via: clientconfig.LastChangeViaLineage, From: slices.Min(seeds)}] = true
 			}
 		}
 		own, _ := cfg.BoundOwnKBs(p)
 		for _, kb := range cfg.ProviderLineage(p) {
-			from := ""
-			for _, seed := range own {
-				if slices.Contains(cfg.Lineage(seed).Closure, kb) {
-					from = seed
-					break
-				}
-			}
-			out[clientconfig.DerivedChangeItem{KB: kb, Via: clientconfig.LastChangeViaLineage, From: from, Provider: p}] = true
+			i := slices.IndexFunc(own, func(seed string) bool { return slices.Contains(cfg.Lineage(seed).Closure, kb) })
+			out[clientconfig.DerivedChangeItem{KB: kb, Via: clientconfig.LastChangeViaLineage, From: own[max(i, 0)], Provider: p}] = true
 		}
 	}
 	return out
@@ -164,11 +141,12 @@ func diffSnapshots(before, after map[clientconfig.DerivedChangeItem]bool, pre *p
 			w.Removed = append(w.Removed, it)
 		}
 	}
-	less := func(a, b clientconfig.DerivedChangeItem) int {
-		return strings.Compare(fmt.Sprint(a.Provider, "\x00", a.Path, "\x00", a.KB, "\x00", a.Via), fmt.Sprint(b.Provider, "\x00", b.Path, "\x00", b.KB, "\x00", b.Via))
+	key := func(it clientconfig.DerivedChangeItem) string {
+		return it.Provider + "\x00" + it.Path + "\x00" + it.KB + "\x00" + it.Via
 	}
-	slices.SortFunc(w.Added, less)
-	slices.SortFunc(w.Removed, less)
+	for _, l := range [][]clientconfig.DerivedChangeItem{w.Added, w.Removed} {
+		slices.SortFunc(l, func(a, b clientconfig.DerivedChangeItem) int { return strings.Compare(key(a), key(b)) })
+	}
 	return w
 }
 
@@ -179,25 +157,21 @@ func printWidenedBindings(out io.Writer, w widening, dryRun bool) {
 	if dryRun {
 		prefix = "[dry-run] "
 	}
-	line := func(it clientconfig.DerivedChangeItem, added bool) string {
-		kb, path := escapeControl(it.KB), escapeControl(it.Path)
-		switch {
-		case it.Provider != "" && added:
-			return fmt.Sprintf("%s: %s bound by lineage (from %s)", escapeControl(it.Provider), kb, escapeControl(it.From))
-		case it.Provider != "":
-			return fmt.Sprintf("%s: %s no longer bound by lineage", escapeControl(it.Provider), kb)
-		case it.Via == clientconfig.LastChangeViaLineage && added:
-			return fmt.Sprintf("bound by lineage: %s (from %s) in %s", kb, escapeControl(it.From), path)
-		case added:
-			return fmt.Sprintf("bound by %s: %s in %s", it.Via, kb, path)
+	line := func(it clientconfig.DerivedChangeItem, no string) string {
+		kb, from := escapeControl(it.KB), ""
+		if it.From != "" && no == "" {
+			from = " (from " + escapeControl(it.From) + ")"
 		}
-		return fmt.Sprintf("no longer bound by %s: %s in %s", it.Via, kb, path)
+		if it.Provider != "" {
+			return fmt.Sprintf("%s: %s %sbound by lineage%s", escapeControl(it.Provider), kb, no, from)
+		}
+		return fmt.Sprintf("%sbound by %s: %s%s in %s", no, it.Via, kb, from, escapeControl(it.Path))
 	}
 	for _, it := range w.Added {
-		fmt.Fprintln(out, prefix+line(it, true))
+		fmt.Fprintln(out, prefix+line(it, ""))
 	}
 	for _, it := range w.Removed {
-		fmt.Fprintln(out, prefix+line(it, false))
+		fmt.Fprintln(out, prefix+line(it, "no longer "))
 	}
 }
 
@@ -207,14 +181,13 @@ type syncWidening struct{ Mounted, Derived, Lineage int }
 // printSyncWidening is the closing line: nothing when no count is set.
 func printSyncWidening(out io.Writer, s syncWidening, dryRun bool) {
 	var parts []string
-	if s.Mounted > 0 {
-		parts = append(parts, fmt.Sprintf("%d KB(s) mounted", s.Mounted))
-	}
-	if s.Derived > 0 {
-		parts = append(parts, fmt.Sprintf("%d repository binding(s) derived", s.Derived))
-	}
-	if s.Lineage > 0 {
-		parts = append(parts, fmt.Sprintf("%d KB(s) brought by lineage", s.Lineage))
+	for _, c := range []struct {
+		n    int
+		what string
+	}{{s.Mounted, "KB(s) mounted"}, {s.Derived, "repository binding(s) derived"}, {s.Lineage, "KB(s) brought by lineage"}} {
+		if c.n > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", c.n, c.what))
+		}
 	}
 	if len(parts) == 0 {
 		return
