@@ -163,7 +163,10 @@ func cmdKBRename(args []string) int {
 	if len(plan.Bindings) > 0 {
 		if err := rewriteBindings(plan.Old, plan.New); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: the KB is renamed, but this machine's client bindings still name %q: %v\n", plan.Old, err)
-			fmt.Fprintf(os.Stderr, "  rebind each one by hand: `cartographer client unbind <provider> %s` then `cartographer client bind <provider> %s` (repeat its --no-lineage or --exclude <kbs>, `cartographer client show <provider>` prints them)\n", plan.Old, plan.New)
+			// Fixed text: it prints when the config could not be rewritten, so the
+			// stored options are unknown here; the placeholder says a bind
+			// replaces them whole and a bare one would drop them.
+			fmt.Fprintf(os.Stderr, "  rebind each one by hand: `cartographer client unbind <provider> %s` then `cartographer client bind <provider> %s` (repeat its options: [--no-lineage | --exclude <kbs>]; `cartographer client show <provider>` prints them)\n", plan.Old, plan.New)
 			return 1
 		}
 		fmt.Printf("rewrote %d client binding(s) in this machine's .cartographer.yaml\n", len(plan.Bindings))

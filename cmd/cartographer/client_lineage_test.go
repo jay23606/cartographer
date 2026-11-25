@@ -125,3 +125,26 @@ func TestRenameResolvesBoundAndExcluded(t *testing.T) {
 		t.Fatalf("plain rename: %v / %v", kbs, ex)
 	}
 }
+
+// The rename rewrites the binding in place: its lineage options are carried
+// to the new name, not dropped.
+func TestRenameRewriteBindingsKeepsLineageOptions(t *testing.T) {
+	home := providerLineageHome(t)
+	cfg := loadCfg(t, home)
+	if err := cfg.Bind("codex", "client-kb"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cfg.SetProviderLineage("codex", false, []string{"core-kb"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := clientconfig.Save(home, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := rewriteBindings("client-kb", "client-new"); err != nil {
+		t.Fatal(err)
+	}
+	b := loadCfg(t, home).Clients["codex"]
+	if !slices.Equal(b.KBs, []string{"client-new"}) || !slices.Equal(b.Exclude, []string{"core-kb"}) {
+		t.Fatalf("binding = %+v", b)
+	}
+}
