@@ -22,6 +22,9 @@ import (
 // outside the concepts: no OKF frontmatter, not walked as a Map, not indexed.
 const DashboardsDir = "dashboards"
 
+// DashboardPath is the KB-relative path of the dashboard called name.
+func DashboardPath(name string) string { return DashboardsDir + "/" + name + ".yaml" }
+
 const (
 	// MaxDashboards is the number of dashboards a KB may hold.
 	MaxDashboards = 32
@@ -462,7 +465,7 @@ func (kb *KB) ReadDashboard(name string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	rel := DashboardsDir + "/" + name + ".yaml"
+	rel := DashboardPath(name)
 	path := filepath.Join(dir, name+".yaml")
 	fi, lerr := os.Lstat(path)
 	if !exists || errors.Is(lerr, os.ErrNotExist) {
