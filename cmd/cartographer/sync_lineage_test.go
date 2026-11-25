@@ -35,6 +35,8 @@ type lineageServer struct {
 	instructions bool
 	// hookKB: the KB whose pull also carries a hook.
 	hookKB string
+	// skillName: every KB's pull serves its skill under this name, so two KBs collide.
+	skillName string
 }
 
 func newLineageServer(t *testing.T, mounted ...string) *lineageServer {
@@ -70,7 +72,11 @@ func newLineageServer(t *testing.T, mounted ...string) *lineageServer {
 			text, isErr = "relations unavailable", true
 		} else {
 			var m map[string]any
-			_ = json.Unmarshal([]byte(syncPullPayload(t, kb, "skill-"+kb)), &m)
+			skill := "skill-" + kb
+			if s.skillName != "" {
+				skill = s.skillName
+			}
+			_ = json.Unmarshal([]byte(syncPullPayload(t, kb, skill)), &m)
 			if s.instructions {
 				body := []byte("# section of " + kb + "\n")
 				files := []contract.ArtifactFile{{Path: "instructions.md", Content: body}}
@@ -733,5 +739,133 @@ func TestSyncLineageApprovals(t *testing.T) {
 	}
 	if !repoSkill(repo, "core-kb") {
 		t.Error("the lineage KB's skill was not applied")
+	}
+}
+
+// trackedLineageEnv is a claude bound explicitly (workspace scope) to a
+// repository that tracks CLAUDE.md, with client-kb depending on core-kb once
+// the relation is set. Every KB's pull carries an instructions section.
+func trackedLineageEnv(t *testing.T, tracked ...string) (*lineageEnv, string) {
+	t.Helper()
+	repo := cloneOf(t, "example.com/owner/worked-on", tracked...)
+	srv := newLineageServer(t, "client-kb", "core-kb")
+	srv.instructions = true
+	srv.relations["client-kb"] = closureOf()
+	srv.relations["core-kb"] = closureOf()
+	e := newLineageEnv(t, srv, claudeBound("client-kb"))
+	e.cfg.Workspaces = map[string][]clientconfig.WorkspaceBinding{"claude": {{Path: repo, KBs: []string{"client-kb"}}}}
+	if err := e.cfg.SetWorkspaceScope("claude", clientconfig.ScopeWorkspace); err != nil {
+		t.Fatal(err)
+	}
+	if err := clientconfig.Save(e.dir, e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	return e, repo
+}
+
+func readFileT(t *testing.T, p string) string {
+	t.Helper()
+	b, err := os.ReadFile(p)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// AC-lineage-31: with a tracked instructions file, a relation appearing and
+// disappearing changes no byte of it, while the lineage KB's skill arrives.
+func TestTrackedAgentsMDUntouchedByLineage(t *testing.T) {
+	e, repo := trackedLineageEnv(t, "CLAUDE.md")
+	file := filepath.Join(repo, "CLAUDE.md")
+	if _, _, err := e.syncOut(t, syncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	before := readFileT(t, file)
+	if !strings.Contains(before, "client-kb") || repoSkill(repo, "core-kb") {
+		t.Fatalf("setup: the hand-bound KB is not in the block or core-kb is already bound:\n%s", before)
+	}
+	e.srv.set(func(s *lineageServer) { s.relations["client-kb"] = closureOf("core-kb") })
+	if _, _, err := e.syncOut(t, syncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFileT(t, file); got != before {
+		t.Errorf("the tracked file changed when a relation appeared:\n%s", got)
+	}
+	if !repoSkill(repo, "core-kb") {
+		t.Error("the lineage KB's skill did not arrive")
+	}
+	e.srv.set(func(s *lineageServer) { s.relations["client-kb"] = closureOf() })
+	if _, _, err := e.syncOut(t, syncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFileT(t, file); got != before {
+		t.Errorf("the tracked file changed when the relation went:\n%s", got)
+	}
+	// status and sync agree: nothing is pending after the sync.
+	if out := gitIn(t, repo, "status", "--porcelain", "CLAUDE.md"); out != "" && !strings.Contains(out, "CLAUDE.md") {
+		t.Errorf("unexpected status %q", out)
+	}
+}
+
+// AC-lineage-32: an untracked destination carries the lineage KB's section.
+func TestUntrackedInstructionsCarryLineage(t *testing.T) {
+	e, repo := trackedLineageEnv(t)
+	e.srv.set(func(s *lineageServer) { s.relations["client-kb"] = closureOf("core-kb") })
+	if _, _, err := e.syncOut(t, syncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFileT(t, filepath.Join(repo, "CLAUDE.md")); !strings.Contains(got, "core-kb") {
+		t.Errorf("the block does not name the lineage KB:\n%s", got)
+	}
+}
+
+// AC-lineage-33: a derived binding with lineage writes nothing into the
+// tracked file; Claude Code's CLAUDE.local.md carries the lineage KB.
+func TestDerivedLineageInstructions(t *testing.T) {
+	e, repo := workspaceLineageEnv(t)
+	e.srv.set(func(s *lineageServer) { s.instructions = true })
+	tracked := cloneOf(t, "example.com/owner/worked-on", "CLAUDE.md")
+	e.cfg.Paths = map[string]string{"worked-on": tracked}
+	if err := clientconfig.Save(e.dir, e.cfg); err != nil {
+		t.Fatal(err)
+	}
+	_ = repo
+	if _, _, err := e.syncOut(t, syncOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := readFileT(t, filepath.Join(tracked, "CLAUDE.md")); got != "# team rules\n" {
+		t.Errorf("the tracked file was edited:\n%s", got)
+	}
+	if got := readFileT(t, filepath.Join(tracked, "CLAUDE.local.md")); !strings.Contains(got, "core-kb") {
+		t.Errorf("CLAUDE.local.md does not carry the lineage KB:\n%s", got)
+	}
+}
+
+// AC-lineage-34: a collision with a lineage KB refuses as before and says where
+// the KB came from and how to opt out, for a workspace and a provider scope.
+func TestLineageCollisionMessage(t *testing.T) {
+	for _, scope := range []string{"workspace", "provider"} {
+		var e *lineageEnv
+		if scope == "workspace" {
+			e, _ = trackedLineageEnv(t)
+		} else {
+			srv := newLineageServer(t, "client-kb", "core-kb")
+			srv.relations["core-kb"] = closureOf()
+			e = newLineageEnv(t, srv, claudeBound("client-kb"))
+		}
+		e.srv.set(func(s *lineageServer) {
+			s.skillName = "shared"
+			s.relations["client-kb"] = closureOf("core-kb")
+		})
+		stdout, stderr, err := e.syncOut(t, syncOptions{})
+		all := stdout + stderr
+		if err != nil {
+			all += err.Error()
+		}
+		for _, want := range []string{"claimed by", "core-kb comes by lineage from client-kb; opt out with: ", "--exclude core-kb"} {
+			if !strings.Contains(all, want) {
+				t.Errorf("%s: output misses %q:\n%s", scope, want, all)
+			}
+		}
 	}
 }

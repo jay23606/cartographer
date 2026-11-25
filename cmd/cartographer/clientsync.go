@@ -588,7 +588,7 @@ func fetchMergedManifestFor(cfg *clientconfig.Config, kb string) (contract.Manif
 		judged++
 		if err := add(cs.forProjection(cfg, p)); err != nil {
 			if label := p.Label(); label != "" {
-				err = fmt.Errorf("%s: %w", label, err)
+				err = fmt.Errorf("%s: %w%s", label, err, lineageCollisionHint(p, err))
 			}
 			return contract.Manifest{}, err
 		}
