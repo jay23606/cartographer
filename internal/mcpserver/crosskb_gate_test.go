@@ -3,6 +3,8 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
+	"github.com/BeppeTemp/cartographer/internal/auth"
+	"github.com/BeppeTemp/cartographer/internal/feedback"
 	"os"
 	"path/filepath"
 	"strings"
@@ -210,5 +212,32 @@ func TestOrphanVerdictIsNoExistenceOracle(t *testing.T) {
 		if !shown("reads-a-b", false, path) {
 			t.Errorf("reads-a-b / %s: with no edge the orphan stays", path)
 		}
+	}
+}
+
+// kb_guide says how to link another KB exactly when initialize does: the
+// connection serves two or more KBs the caller reads and the caller writes.
+func TestKBGuideCrossLinkLine(t *testing.T) {
+	t.Parallel()
+	r := newCrossRig(t)
+	const marker = "[[kb:<name>/<id>]]"
+	writer := principal(auth.Permission{KB: "kb-a", Write: true}, auth.Permission{KB: "kb-b", Write: true})
+	reader := principal(auth.Permission{KB: "kb-a"}, auth.Permission{KB: "kb-b"})
+	guide := func(ctx context.Context) string { return renderKBGuide(ctx, r.a, nil, feedback.Mode("")) }
+	if got := guide(withRoutedSet(writer, []string{"kb-a", "kb-b"})); !strings.Contains(got, marker) {
+		t.Errorf("a writer on a two-KB connection lacks the line:\n%s", got)
+	}
+	if got := guide(withRoutedSet(writer, []string{"kb-a"})); strings.Contains(got, marker) {
+		t.Errorf("a one-KB connection has the line")
+	}
+	if got := guide(writer); strings.Contains(got, marker) {
+		t.Errorf("a per-KB endpoint has the line")
+	}
+	if got := guide(withRoutedSet(reader, []string{"kb-a", "kb-b"})); strings.Contains(got, marker) {
+		t.Errorf("a read-only caller has the line")
+	}
+	// A KB of the set the caller cannot read does not count.
+	if got := guide(withRoutedSet(principal(auth.Permission{KB: "kb-a", Write: true}), []string{"kb-a", "kb-b"})); strings.Contains(got, marker) {
+		t.Errorf("an unreadable second KB counted")
 	}
 }

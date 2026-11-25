@@ -196,6 +196,11 @@ type GuideOptions struct {
 	// Feedback is the feedback.destination mode ("github", "custom", "off"; ""
 	// is github): it selects the bullet that says when to offer a report.
 	Feedback string
+	// CrossLinks is true when the connection serves two or more KBs the caller
+	// reads: the guide then says how to link a page of another one. The caller
+	// decides it (initialize and kb_guide must agree), never len(kbs): kb_guide
+	// renders one KB of a connection that serves several.
+	CrossLinks bool
 }
 
 // ProcedureLine is one served procedure in the guide's list (#1316).
@@ -235,7 +240,7 @@ func RenderGuide(kbs []GuideKB, opts GuideOptions) string {
 	}
 	if !allOptOut {
 		sb.WriteString(GuideOperational(opts.ReadOnly, opts.Procedures, opts.Feedback))
-		if len(kbs) >= 2 && !opts.ReadOnly {
+		if opts.CrossLinks && !opts.ReadOnly {
 			sb.WriteString(crossLinkBullet)
 		}
 	}
